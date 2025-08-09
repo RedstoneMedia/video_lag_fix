@@ -13,7 +13,13 @@ regex = "1.11.1"
 fast_image_resize = {version =  "5.2.0", features = ["image"] }
 clap = { version = "4.5.41", features = ["derive"] }
 
+[dev-dependencies]
+imageproc = "0.25.0"
+
 [profile.release]
 opt-level = 3
 debug = false
 incremental = true
+
+[profile.test]
+opt-level = 2

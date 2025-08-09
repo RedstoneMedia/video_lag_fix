@@ -58,12 +58,48 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<DoneDuplicat
     }
 }
 
+
+fn get_video_params(file_path: impl AsRef<Path>) -> VideoParams {
+    let output = Command::new("ffprobe")
+        .args([
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height,r_frame_rate",
+            "-of", "default=noprint_wrappers=1:nokey=0",
+            &file_path.as_ref().to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to run ffprobe");
+
+    let stdout = str::from_utf8(&output.stdout).expect("Invalid UTF-8 output from ffprobe");
+
+    let mut width = None;
+    let mut height = None;
+    let mut framerate = None;
+
+    for line in stdout.lines() {
+        if let Some(val) = line.strip_prefix("width=") {
+            width = Some(val.parse().expect("Invalid width"));
+        } else if let Some(val) = line.strip_prefix("height=") {
+            height = Some(val.parse().expect("Invalid height"));
+        } else if let Some(val) = line.strip_prefix("r_frame_rate=") {
+            let mut parts = val.splitn(2, '/');
+            let num: f64 = parts.next().unwrap_or("0").parse().expect("Invalid numerator");
+            let den: f64 = parts.next().unwrap_or("1").parse().expect("Invalid denominator");
+            framerate = Some(if den != 0.0 { num / den } else { 0.0 });
+        }
+    }
+
+    VideoParams {
+        width: width.expect("Missing width"),
+        height: height.expect("Missing height"),
+        framerate: framerate.expect("Missing framerate"),
+    }
+}
+
+
 pub fn patch_video(args: &Args, duplicate_receiver: Receiver<DoneDuplicate>) {
-    let params = VideoParams {
-        framerate: 60.0,
-        width: 2560,
-        height: 1440,
-    };
+    let params = get_video_params(&args.input_path);
 
     // Build ffmpeg command
     let mut cmd = Command::new("ffmpeg");
@@ -96,4 +132,18 @@ pub fn patch_video(args: &Args, duplicate_receiver: Receiver<DoneDuplicate>) {
 
     let status = ffmpeg.wait().unwrap();
     println!("ffmpeg exited with: {}", status);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_video_params() {
+        let params = get_video_params("trimm.mkv");
+        assert_eq!(params.width, 2560);
+        assert_eq!(params.height, 1440);
+        assert_eq!(params.framerate, 60.0);
+    }
+
 }

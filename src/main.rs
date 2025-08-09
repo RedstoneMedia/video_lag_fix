@@ -43,11 +43,11 @@ struct Args {
     #[arg(long, default_value_t = 0.08, verbatim_doc_comment)]
     max_dup_threshold: f32,
     /// Minimum number of consecutive duplicate frames required to trigger interpolation
-    /// Range: 1..998
+    /// Range: 1..
     #[arg(long, default_value_t = 2, verbatim_doc_comment)]
     min_duplicates: usize,
     /// Maximum number of consecutive duplicate frames to interpolate
-    /// Range: 1..999
+    /// Range: 1..
     #[arg(long, default_value_t = 8, verbatim_doc_comment)]
     max_duplicates: usize,
 
@@ -61,7 +61,11 @@ struct Args {
     render_cq: u8,
     /// Render preset for output video encoder
     #[arg(long, default_value = "p4")]
-    render_preset: String
+    render_preset: String,
+
+    /// Only find duplicates, do not patch video
+    #[arg(long, action)]
+    find_only: bool
 }
 
 fn main() {
@@ -73,6 +77,10 @@ fn main() {
 {all-args}{after-help}";
     let mut matches = Args::command().help_template(full_template).get_matches();
     let args = Args::from_arg_matches_mut(&mut matches).unwrap();
+    if !args.input_path.exists() {
+        eprintln!("Error: Input file does not exist");
+        std::process::exit(1);
+    }
 
     let start = std::time::Instant::now();
 
@@ -86,12 +94,16 @@ fn main() {
         duplicate_sender.send(done_duplicate).unwrap();
     });
 
-    let args_copy = args.clone();
-    let patch_thread = std::thread::spawn(move || patch::patch_video(&args_copy, duplicate_receiver));
-
-    find::find_duplicates(&args, &mut rife);
-    rife.complete();
-    patch_thread.join().unwrap();
+    if !args.find_only {
+        let args_copy = args.clone();
+        let patch_thread = std::thread::spawn(move || patch::patch_video(&args_copy, duplicate_receiver));
+        find::find_duplicates(&args, &mut rife);
+        rife.complete();
+        patch_thread.join().unwrap();
+    } else {
+        find::find_duplicates(&args, &mut rife);
+        rife.complete();
+    }
 
     println!("Finished in {:.2}s", start.elapsed().as_secs_f32());
 }
