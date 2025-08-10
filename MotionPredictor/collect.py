@@ -4,10 +4,11 @@ import subprocess
 import math
 import numpy as np
 import torch
+from pathlib import Path
 from PIL import Image
 from torchvision.models.optical_flow import raft_large, Raft_Large_Weights
 
-
+DATA_ROOT = r"./data"
 FLOW_IMAGE_SIZE = (1536, 864)
 
 # Uhh
@@ -49,13 +50,16 @@ def get_flow(last, current):
     return flow_out
 
 
-def calc_motion(last, current, flow, min_mag = 0.2):
+def calc_motion(last, current, min_mag = 0.2) -> tuple[np.ndarray, tuple[float, float, float]]:
     flow = get_flow(last, current)
-    #flow = cv2.calcOpticalFlowFarneback(last, current, flow, 0.4, 7, 31, 10, 9, 1.8, cv2.OPTFLOW_FARNEBACK_GAUSSIAN)
+    avg_flow_x = np.mean(flow[..., 0])
+    avg_flow_y = np.mean(flow[..., 1])
+
     mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+
     motion = np.average(np.maximum(mag, min_mag) - min_mag)
     motion = max(float(motion), 1e-4) - 1e-4
-    return flow, motion
+    return flow, (motion, avg_flow_x, avg_flow_y)
 
 
 def get_motion(frames_path: str):
@@ -70,19 +74,18 @@ def get_motion(frames_path: str):
         img = cv2.resize(img, FLOW_IMAGE_SIZE, interpolation=cv2.INTER_AREA)
         # Two frames ago
         if last_last is not None:
-            _, motion = calc_motion(last_last, img, flow)
+            _, motion = calc_motion(last_last, img)
             yield last_last_file, file, motion
         # One frames ago
         if last is not None:
-            flow, motion = calc_motion(last, img, flow)
+            flow, motion = calc_motion(last, img)
             visul_flow(flow)
-            yield last_file, file, float(motion)
+            yield last_file, file, motion
 
         last_last = last
         last_last_file = last_file
         last = img
         last_file = file
-
 
 
 def visul_flow(flow: np.ndarray):
@@ -110,50 +113,73 @@ def get_video_duration(file_path):
     except ValueError:
         raise RuntimeError("Could not extract video duration.")
 
-def extract_segments(video_path: str, segment_duration: float, n: int, output_dir: str):
+
+def extract_segments(video_path: Path | str, output_dir: Path | str, segment_duration: float, max_n: int, segment_every: float):
+    if isinstance(video_path, str):
+        video_path = Path(video_path)
+    if isinstance(output_dir, str):
+        output_dir = Path(output_dir)
+
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Input file '{video_path}' not found.")
     if not os.path.exists(output_dir):
         raise FileNotFoundError(f"Output directory '{output_dir}' not found.")
 
-    total_duration = get_video_duration(video_path) / n
-    start_times = []
-    for i in range(n):
-        center = (i + 0.5) * total_duration / n
-        start = center - segment_duration / 2
-        start = max(0.0, min(start, total_duration - segment_duration))
-        start_times.append(math.floor(start))
+    total_duration = get_video_duration(video_path)
+
+    n = math.floor((total_duration - segment_duration) / segment_every) + 1
+    n = min(max_n, n)
+    if n <= 0:
+        raise ValueError("Video too short for any segments.")
+    gap = (total_duration - n * segment_duration) / (n + 1)
+    start_times = [gap * (i + 1) + segment_duration * i for i in range(n)]
 
     for i, start in enumerate(start_times):
-        segment_dir = f"{output_dir}/{i:04d}"
-        if os.path.exists(segment_dir):
-            raise FileExistsError(f"Segment directory '{segment_dir}' already exists")
+        j = i
+        segment_dir = Path(output_dir).joinpath(f"{j:05d}")
+        while segment_dir.exists():
+            j += 1
+            segment_dir = Path(output_dir).joinpath(f"{j:05d}")
         os.mkdir(segment_dir)
-        output_pattern = f"{segment_dir}/%06d.png"
+        output_pattern = f"{segment_dir}/%07d.png"
         cmd = [
             "ffmpeg",
-            "-i", video_path,
+            "-hwaccel", "cuda",
             "-ss", str(start),
+            "-i", str(video_path),
             "-t", str(segment_duration),
             "-vf", "scale=1920:1080",
+            "-an",
             output_pattern
         ]
         print(f"Extracting segment {i+1}/{n} from {start} to {start + segment_duration}")
         subprocess.run(cmd)
 
 
-def collect():
-    sections_path = "imgs"
-    with open("motion_other.csv", mode="w", encoding="utf-8") as f:
+def extract_all_segments(paths: list[str], segment_duration: float, max_n: int, segment_every: float):
+    out_dir = Path(DATA_ROOT).joinpath("imgs")
+    for video_path in paths:
+        print("Extraing video: ", video_path)
+        extract_segments(video_path, out_dir, segment_duration, max_n, segment_every)
+
+
+def collect(name: str):
+    sections_path = os.path.join(DATA_ROOT, "imgs")
+    csv_path = os.path.join(DATA_ROOT, name)
+    with open(csv_path, mode="a", encoding="utf-8") as f:
         for dir in os.listdir(sections_path):
             path = os.path.join(sections_path, dir)
+            if not os.path.isdir(path):
+                continue
             print(f"Segment: {dir}")
-            n = len(os.listdir(path))
+            n = len(os.listdir(path)) * 2
             for i, (f0, f1, motion) in enumerate(get_motion(path)):
-                print(f"{i:04d}/{n}")
-                f.write(f"{os.path.join(path, f0)},{os.path.join(path, f1)},{motion}\n")
+                print(f"{i:04d}/{n-1}")
+                f.write(f"{os.path.join("imgs", dir, f0)},{os.path.join("imgs", dir, f1)},{','.join([str(v) for v in motion])}\n")
 
 
 if __name__ == "__main__":
-    #extract_segments(r"D:\Aufnahmen\Videos_Raw\2025-07-18 19-53-12.mkv", 5.0, 10, r"D:\Coding\VideoLagFix\MotionPredictor\imgs")
-    collect()
+    #paths = list(Path(DATA_ROOT).joinpath("vids").glob("*.*"))
+    #paths += [r"D:\Aufnahmen\Videos_Raw\2025-04-30 01-39-08.mkv", r"D:\Aufnahmen\Videos_Raw\2025-04-19 13-37-38.mkv", r"D:\Aufnahmen\Videos_Raw\2023-05-10 22-36-36.mkv", r"D:\Aufnahmen\Videos_Raw\2025-08-03 16-25-30.mkv"]
+    #extract_all_segments(paths, 2.5, 10, 2.3*60)
+    collect("motion.csv")
