@@ -11,7 +11,7 @@ def main():
     parser.add_argument("output_path")
     args = parser.parse_args()
 
-    model = TinyMotionNet(denorm=True)
+    model = TinyMotionNet(probabilistic=True, output_dist=False)
     state_dict = torch.load(args.model_path)
     model.load_state_dict(state_dict)
     model.to("cpu")

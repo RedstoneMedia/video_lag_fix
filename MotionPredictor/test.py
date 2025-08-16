@@ -26,28 +26,18 @@ def pred_one(img_a_path: str, img_b_path: str, model: TinyMotionNet) -> float:
 
     cv2.imshow("diff", (diff + 1) / 2.0)
     cv2.imshow("abs", np.abs(diff))
-    cv2.waitKey()
+    cv2.waitKey(1)
 
     x = TF.to_tensor(diff).to(torch.float32)
     result = model(x.unsqueeze(1))
-    print(result)
     return result[0].item()
 
 
 def main():
-    model = TinyMotionNet(denorm=False)
-    state_dict = torch.load(r".\models\v5\40598_-0.847.pth") # models/v3/80430_0.051.pth
+    model = TinyMotionNet()
+    state_dict = torch.load(r".\models\v8\83494_-0.329.pth") # models/v3/80430_0.051.pth
     model.load_state_dict(state_dict)
     model.eval()
-    """
-    img_server = ImageProcessServerConnect(
-        cache_dir=os.path.join(DATA_ROOT, "cache"),
-        threaded_reads=True,
-        working_dir=".",
-        fill_strategy="constant 0",
-        filter_type="CatmullRom",
-        grayscale=True
-    )"""
 
     dir = r"data\imgs\00083"
     last_path = None

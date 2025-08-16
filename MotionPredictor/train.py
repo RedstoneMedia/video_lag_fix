@@ -17,14 +17,21 @@ from collect import DATA_ROOT
 from dataset import INPUT_IMAGE_SIZE, MotionDataset
 from img_process_server_connect import ImageProcessServerConnect
 
+from typing import Callable
+
+
 class TinyMotionNet(nn.Module):
 
-    def __init__(self, y_mean=0.0, y_std=1.0, denorm=True):
+    def __init__(self, y_mean=0.0, y_std=1.0, denorm=True, probabilistic=True, output_dist=False):
         super().__init__()
-        channels = [16, 40, 72, 136] # channels = [16, 40, 72, 128]
+        channels = [24, 40, 72, 136] # channels = [16, 40, 72, 128]
         prev_ch  = 1
         self.blocks = nn.ModuleList()
         self.denorm = denorm
+        self.probabilistic = probabilistic
+        if not probabilistic and output_dist:
+            raise ValueError("Only probabilistic models can output a distribution")
+        self.output_dist = output_dist
 
         for out_ch in channels:
             # depthwise
@@ -54,7 +61,7 @@ class TinyMotionNet(nn.Module):
             prev_ch = out_ch
 
         self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.LazyLinear(2)
+        self.fc = nn.LazyLinear(2 if probabilistic else 1)
 
         self.register_buffer('y_mean', torch.tensor(y_mean))
         self.register_buffer('y_std', torch.tensor(y_std))
@@ -66,14 +73,21 @@ class TinyMotionNet(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.fc(x)
 
-        mu = x[:, 0]
-        log_var = x[:, 1]
-        log_var = torch.clamp(log_var, min=-10.0, max=10.0)
+        if self.output_dist:
+            mu = x[:, 0]
+            log_var = x[:, 1]
+            log_var = torch.clamp(log_var, min=-10.0, max=10.0)
+            if self.denorm:
+                mu = mu * self.y_std + self.y_mean
+                mu = mu.relu() # Non-negative
+                log_var = log_var * torch.log(self.y_std)
+            return mu, log_var
 
+        x = x.view(-1)
         if self.denorm:
-            x = mu * self.y_std + self.y_mean
-            return x.relu() # Non-negative
-        return mu, log_var
+            x = x * self.y_std + self.y_mean
+            x = x.relu() # Non-negative
+        return x
 
     def initialize_weights(self):
         for m in self.modules():
@@ -93,10 +107,32 @@ class TinyMotionNet(nn.Module):
                     init.zeros_(m.bias)
 
 
+def calc_loss(y: torch.Tensor, pred) -> torch.Tensor:
+    if isinstance(pred, tuple) and len(pred) == 2:
+        # Assume distribution -> nnl
+        mean: torch.Tensor = pred[0]
+        log_var: torch.Tensor = pred[1]
+        log_var = torch.clamp(log_var, min=-3.3, max=0.55) # Don't blow up the variance too much to compensate -> Important thing is mean
+        sigma = torch.exp(0.5 * log_var) + 1e-6
+        y_dist = torch.distributions.Normal(loc=mean, scale=sigma)
+        return (-y_dist.log_prob(y)).mean()
+    if isinstance(pred, torch.Tensor):
+        return F.smooth_l1_loss(y, pred, beta=0.65, reduction="mean")
+    raise ValueError("Invalid prediction type to calculate loss")
+
+
+def calc_metric(y: torch.Tensor, pred, metric: Callable[..., torch.Tensor], *args, **kwargs) -> float:
+    if isinstance(pred, tuple):
+        return float(metric(y, pred[0], *args, **kwargs))
+    if isinstance(pred, torch.Tensor):
+        return float(metric(y, pred, *args, **kwargs))
+    raise ValueError("Invalid prediction type to calculate metric")
+
+
 def train():
-    model_name = "v5"
+    model_name = "v8-unsure"
     batch_size = 32
-    epochs = 250
+    epochs = 135
 
     # Load dataset
     img_server = ImageProcessServerConnect(
@@ -127,16 +163,9 @@ def train():
     model_path = os.path.join("models", model_name)
     if not os.path.exists(model_path):
         os.mkdir(model_path)
-    model = TinyMotionNet(y_mean=train_set.y_mean, y_std=train_set.y_std, denorm=False)
+    model = TinyMotionNet(y_mean=train_set.y_mean, y_std=train_set.y_std, denorm=False, probabilistic=True, output_dist=True)
     summary(model, (batch_size, 1, INPUT_IMAGE_SIZE[1], INPUT_IMAGE_SIZE[0]))
     model.initialize_weights() # after materialized run with summary
-
-    def calc_loss(y: torch.Tensor, y_dist: tuple[torch.Tensor, torch.Tensor]):
-        log_var = y_dist[1]
-        log_var = torch.clamp(log_var, min=-3.0, max=1.0)
-        sigma = torch.exp(0.5 * log_var) + 1e-6
-        y_dist = torch.distributions.Normal(loc=y_dist[0], scale=sigma)
-        return (-y_dist.log_prob(y)).mean()
 
     # Train
     steps = 0
@@ -151,17 +180,17 @@ def train():
         train_mse_total = 0
         for i, (x, y) in train_bar:
             optimizer.zero_grad()
-            y_dist = model(x.cuda())
+            y_hat = model(x.cuda())
             y = y.cuda()
-            loss = calc_loss(y, y_dist)
+            loss = calc_loss(y, y_hat)
             loss.backward()
             optimizer.step()
 
             train_loss_total += float(loss.item())
             with torch.no_grad():
-                train_mse_total += float(F.mse_loss(y, y_dist[0]))
+                train_mse_total += calc_metric(y, y_hat, F.mse_loss)
 
-            train_bar.set_postfix(loss=float(loss.item()), epoch=epoch)
+            train_bar.set_postfix(loss=f"{loss.item():.4f}", epoch=epoch)
             writer.add_scalar("Loss/train", loss.item(), steps)
 
             steps += 1
@@ -179,15 +208,15 @@ def train():
         with torch.no_grad():
             for i, (x, y) in val_bar:
                 start = time.time()
-                y_dist = model(x.cuda())
+                y_hat = model(x.cuda())
                 speed_per_sample = (time.time() - start) / x.shape[0] * 1000
                 y = y.cuda()
-                loss = calc_loss(y, y_dist)
+                loss = calc_loss(y, y_hat)
 
                 val_loss_total += float(loss.item())
-                val_mse_total += float(F.mse_loss(y, y_dist[0]))
+                val_mse_total += calc_metric(y, y_hat, F.mse_loss)
 
-                val_bar.set_postfix(val_loss=float(loss.item()), epoch=epoch, speed=f"{speed_per_sample:.3f}ms")
+                val_bar.set_postfix(val_loss=f"{loss.item():.4f}", epoch=epoch, speed=f"{speed_per_sample:.3f}ms")
 
                 val_steps += 1
 
