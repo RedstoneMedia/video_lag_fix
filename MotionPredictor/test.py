@@ -1,3 +1,5 @@
+import math
+
 import cv2
 import numpy as np
 import torch
@@ -41,7 +43,9 @@ def main():
 
     dir = r"data\imgs\00083"
     last_path = None
-    for file in os.listdir(dir):
+    mean_error = 0.0
+    files = list(os.listdir(dir))
+    for file in files:
         path = os.path.join(dir, file)
         if last_path is not None:
             cv_last = cv2.imread(last_path, cv2.IMREAD_GRAYSCALE)
@@ -52,8 +56,10 @@ def main():
             _, (real_motion, ax, ay) = calc_motion(cv_last, cv)
             real_motion = MotionDataset.calc_raw_target(real_motion, ax, ay)
             pred_motion = pred_one(last_path, path, model)
+            mean_error += abs(mean_error - pred_motion) / len(files)
             print(f"{file} real: {real_motion:.2f} pred: {pred_motion:.2f}")
         last_path = path
+    print("total mean error: ", mean_error)
 
 
 if __name__ == "__main__":

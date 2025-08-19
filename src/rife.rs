@@ -94,7 +94,7 @@ impl Rife {
             if i == n {
                 let mut open_jobs = self.open_jobs.lock().unwrap();
                 let key = format!("{}-{}-{}", in_path.display(), next_path.display(), p.display());
-                let duplicate_chain = duplicate_chain.take().unwrap(); // Can never fail, only taken once
+                let duplicate_chain = duplicate_chain.take().expect("Can never fail, only taken once");
                 open_jobs.insert(key, duplicate_chain);
             }
         }

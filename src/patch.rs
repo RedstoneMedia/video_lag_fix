@@ -66,7 +66,7 @@ fn get_video_params(file_path: impl AsRef<Path>) -> VideoParams {
             "-select_streams", "v:0",
             "-show_entries", "stream=width,height,r_frame_rate",
             "-of", "default=noprint_wrappers=1:nokey=0",
-            &file_path.as_ref().to_str().unwrap(),
+            file_path.as_ref().to_str().unwrap(),
         ])
         .output()
         .expect("Failed to run ffprobe");
@@ -119,7 +119,7 @@ pub fn patch_video(args: &Args, duplicate_receiver: Receiver<DoneDuplicate>) {
     cmd.arg("-rc").arg("vbr");
     cmd.arg("-cq").arg(args.render_cq.to_string());
     cmd.arg("-pix_fmt").arg("yuv420p");
-    cmd.arg("-preset").arg(args.render_preset.to_string());
+    cmd.arg("-preset").arg(&args.render_preset);
     cmd.arg("-fps_mode").arg("passthrough");
     cmd.arg(args.output_path.display().to_string());
     println!("Running: {:?}", cmd);

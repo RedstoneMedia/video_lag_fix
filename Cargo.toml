@@ -12,6 +12,8 @@ mimalloc = "0.1.47"
 regex = "1.11.1"
 fast_image_resize = {version =  "5.2.0", features = ["image"] }
 clap = { version = "4.5.41", features = ["derive"] }
+ort = { version = "2.0.0-rc.10" , features = ["download-binaries"]}
+once_cell = "1.21.3"
 
 [dev-dependencies]
 imageproc = "0.25.0"
