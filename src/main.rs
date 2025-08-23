@@ -104,8 +104,8 @@ fn main() {
     let (duplicate_sender, duplicate_receiver) = std::sync::mpsc::channel::<DoneDuplicate>();
     let mut rife= Rife::start(RIFE_PATH, &args.rife_model_path, move |done_duplicate| {
         // Sometimes RIFE still holds the files lock for some reason, even after reporting "done".
-        utils::try_delete(&done_duplicate.input0, TRY_MAX_TRIES, TRY_WAIT_DURATION).expect("Failed to remove input file");
-        utils::try_delete(&done_duplicate.input1, TRY_MAX_TRIES, TRY_WAIT_DURATION).expect("Failed to remove input file");
+        utils::try_delete(&done_duplicate.input0, TRY_MAX_TRIES, TRY_WAIT_DURATION).expect(&format!("Should remove {}", done_duplicate.input0));
+        utils::try_delete(&done_duplicate.input1, TRY_MAX_TRIES, TRY_WAIT_DURATION).expect(&format!("Should remove {}", done_duplicate.input1));
         // Tell the patcher to insert this
         duplicate_sender.send(done_duplicate).unwrap();
     });
@@ -113,6 +113,7 @@ fn main() {
     if !args.find_only {
         let args_copy = args.clone();
         let patch_thread = std::thread::spawn(move || patch::patch_video(&args_copy, duplicate_receiver));
+        std::thread::sleep(std::time::Duration::from_millis(500));
         find::find_duplicates(&args, &mut rife);
         rife.complete();
         patch_thread.join().unwrap();

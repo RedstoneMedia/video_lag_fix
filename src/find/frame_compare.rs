@@ -26,6 +26,7 @@ fn to_grayscale(frame: &OutputVideoFrame) -> Vec<u8> {
     gray
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct FrameDifference {
     pub hash_distance: f32,
     pub motion_estimate: f32
@@ -37,8 +38,8 @@ impl FrameDifference {
         motion_estimate: f32::INFINITY
     };
 
-    pub fn is_normal(&self) -> bool {
-        self.hash_distance.is_normal() && self.motion_estimate.is_normal()
+    pub fn is_finite(&self) -> bool {
+        self.hash_distance.is_finite() && self.motion_estimate.is_finite()
     }
 }
 
