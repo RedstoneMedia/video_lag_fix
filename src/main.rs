@@ -36,7 +36,7 @@ struct Args {
     diff_mean_alpha: f32,
     /// Multiplier applied to the average frame difference to calculate the duplicate detection threshold
     /// Range: 0.0..1.0 (lower = less sensitive, more deviation from noise floor required)
-    #[arg(long, default_value_t = 0.17, verbatim_doc_comment)]
+    #[arg(long, default_value_t = 0.165, verbatim_doc_comment)]
     mul_dup_threshold: f32,
     /// Maximum allowed absolute difference between frames to be considered duplicates
     /// Range: 0.0..1.0 (1.0 = completely different frame, 0.0 = hash identical)
@@ -48,7 +48,7 @@ struct Args {
     min_duplicates: usize,
     /// Maximum number of consecutive duplicate frames to interpolate
     /// Range: 1..
-    #[arg(long, default_value_t = 15, verbatim_doc_comment)]
+    #[arg(long, default_value_t = 12, verbatim_doc_comment)]
     max_duplicates: usize,
     /// Alpha value for exponential moving average used in recent motion calculation (Responds fast)
     /// Range: 0.5..1.0 (lower = smoother, but slower to adapt)
@@ -62,10 +62,18 @@ struct Args {
     /// Range: 0.0..1.0 (lower = less compensation, higher = more compensation)
     #[arg(long, default_value_t = 0.75, verbatim_doc_comment)]
     motion_compensate_threshold: f32,
+    /// Multiplier applied to the motion compensation threshold, to require less motion when retrying a failed motion compensation
+    /// Range: 0.0..1.0 (lower = less compensation, higher = more compensation)
+    #[arg(long, default_value_t = 0.33, verbatim_doc_comment)]
+    mul_motion_compensate_threshold_retry: f32,
+    /// How many duplicate frames are needed for the motion compensation to be active
+    /// Range: 1..
+    #[arg(long, default_value_t = 1, verbatim_doc_comment)]
+    motion_compensate_start: usize,
     /// Maximum multiple of the background average motion allowed to still interpolate
     /// Allows for more interpolation in low motion areas while thwarting troubling high motion areas to be interpolated too much
     /// Range: 1.0.. (higher = more motion allowed to be interpolated)
-    #[arg(long, default_value_t = 7.0, verbatim_doc_comment)]
+    #[arg(long, default_value_t = 7.3, verbatim_doc_comment)]
     max_motion_mul: f32,
 
     /// Factor by which input frames are downscaled for perceptual hashing
@@ -74,7 +82,7 @@ struct Args {
     diff_hash_resize: u32,
 
     /// Constant quality value for output video encoder (lower is better)
-    #[arg(long, default_value_t = 28)]
+    #[arg(long, default_value_t = 27)]
     render_cq: u8,
     /// Render preset for output video encoder
     #[arg(long, default_value = "p4")]

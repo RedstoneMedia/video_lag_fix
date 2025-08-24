@@ -190,10 +190,6 @@ pub fn find_duplicates(args: &Args, rife: &mut Rife) {
             diff,
             end_frame: frame,
         }, args);
-        if iter_ctx.len() >= args.min_duplicates {
-            println!("i: {}, #{} - #{} diff: {:.4}, motion: {:.4}, state: {:?}", vars.chain_i, frame.frame_num - 1, frame.frame_num, diff.hash_distance, diff.motion_estimate, state);
-            println!("{:?}", check_result);
-        }
         match (check_result, state) {
             (CheckChainResult::FailDuplicate, _) => {}, // skip
             // Lost cause, move on
@@ -228,8 +224,8 @@ pub fn find_duplicates(args: &Args, rife: &mut Rife) {
                 });
                 let avg_diff = vars.avg_hash.unwrap_or(0.0);
                 println!(
-                    "Duplicates {} found #{}-#{}, length: {}, diff_ema: {:0.4}, diff: {:0.4}, chain_motion: {:0.4} at {:.3}s",
-                    vars.chain_i, chain.frames[0], chain.frames.last().unwrap(), chain.frames.len(), avg_diff, vars.last_diff, vars.chain_motion, chain.timestamps[0]
+                    "Duplicates {} found #{}-#{}, length: {}, diff_ema: {:0.4}, diff: {:0.4}, chain_motion: {:0.4}, state: {:?}, at {:.3}s",
+                    vars.chain_i, chain.frames[0], chain.frames.last().unwrap(), chain.frames.len(), avg_diff, vars.last_diff, vars.chain_motion, state, chain.timestamps[0]
                 );
 
                 vars.chain_i += 1;
@@ -294,7 +290,7 @@ fn check_chain(data: ProcessChainData, args: &Args) -> CheckChainResult {
 
     // Check too long
     let len = iter_ctx.len();
-    if len > args.max_duplicates {
+    if len > args.max_duplicates + 1 {
         return CheckChainResult::FailLong;
     }
     // Check for duplicate frame
@@ -308,18 +304,21 @@ fn check_chain(data: ProcessChainData, args: &Args) -> CheckChainResult {
         return CheckChainResult::FailShort;
     }
     // Check motion compensation
-    let recent_motion = vars.recent_motion.unwrap_or(0.0);
-    // Ask for less compensation if we failed it before
-    // That way there will at least be slightly flawed (slow) interpolation rather than a freeze-frame.
-    let motion_compensate_threshold = if state == FindState::FailedCompensate {
-        args.motion_compensate_threshold * 0.3
-    } else {
-        args.motion_compensate_threshold
-    };
-    let required_motion = recent_motion * (len - 1) as f32 * motion_compensate_threshold;
-    if vars.chain_motion < required_motion {
-        return CheckChainResult::CompensationRequired;
+    if len >= args.motion_compensate_start + 1 {
+        let recent_motion = vars.recent_motion.unwrap_or(0.0);
+        // Ask for less compensation if we failed it before
+        // That way there will at least be slightly flawed (slow) interpolation rather than a freeze-frame.
+        let motion_compensate_threshold = if state == FindState::FailedCompensate {
+            args.motion_compensate_threshold * args.mul_motion_compensate_threshold_retry
+        } else {
+            args.motion_compensate_threshold
+        };
+        let required_motion = recent_motion * (len - 1) as f32 * motion_compensate_threshold;
+        if vars.chain_motion < required_motion {
+            return CheckChainResult::CompensationRequired;
+        }
     }
+    // Check too much motion
     let slow_avg_motion = vars.slow_avg_motion.unwrap_or(0.0);
     if vars.chain_motion > slow_avg_motion * args.max_motion_mul {
         return CheckChainResult::FailTooMuchMotion;

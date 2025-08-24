@@ -91,7 +91,6 @@ where
                     i += 1;
                     if i >= self.items.len() {
                         replay_index = None;
-                        println!("End backtrack");
                     } else {
                         replay_index = Some(i);
                     }
