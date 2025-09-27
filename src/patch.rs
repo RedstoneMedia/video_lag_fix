@@ -2,38 +2,59 @@ use std::sync::mpsc::Receiver;
 use std::process::{ChildStdin, Command, Stdio};
 use image::RgbaImage;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use log::{debug, info};
-use crate::Args;
 use crate::rife::{get_intermediate_path, DoneDuplicate};
 use crate::utils::{try_delete, try_exists, TRY_MAX_TRIES, TRY_WAIT_DURATION};
 
-struct VideoParams {
-    framerate: f64,
-    width: u32,
-    height: u32,
+/// A sequential patch to a video.
+///
+/// Ranges are inclusive.
+pub struct Patch {
+    pub start_frame: u32,
+    pub end_frame: u32,
+    pub dir: PathBuf,
 }
 
-fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<DoneDuplicate>, params: &VideoParams) {
+impl Patch {
+    pub fn len(&self) -> u32 {
+        self.end_frame - self.start_frame + 1
+    }
+}
+
+impl From<DoneDuplicate> for Patch {
+    fn from(value: DoneDuplicate) -> Self {
+        let start_frame = value.chain.frames[1]; // 1 because 0 is not a duplicate
+        let end_frame = *value.chain.frames.last().unwrap();
+        let dir = Path::new(&value.last_output).parent()
+            .expect("Should have parent directory").to_path_buf();
+        Self {
+            start_frame,
+            end_frame,
+            dir,
+        }
+    }
+}
+
+fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<Patch>, params: &VideoParams) {
     let transparent_frame = RgbaImage::new(params.width, params.height).into_raw();
     let mut frame_counter = 0u32;
-    let mut i = 0;
-    let mut j_frame = 1;
-    let mut current_duplicate = None;
+    let mut patch_index = 0u32;
+    let mut j_frame = 0;
+    let mut current_patch = None;
 
     loop {
-        if current_duplicate.is_none() {
+        if current_patch.is_none() {
             let Ok(duplicate) = duplicate_receiver.recv() else {break};
-            current_duplicate = Some(duplicate);
+            current_patch = Some(duplicate);
         }
-        let dup = &current_duplicate.as_ref().unwrap();
+        let patch = &current_patch.as_ref().unwrap();
 
-        let show_frame = dup.chain.frames[j_frame];
+        let show_frame = patch.start_frame + j_frame;
         if show_frame != frame_counter {
             stdin.write_all(&transparent_frame).unwrap();
         } else {
-            let patch_dir = Path::new(&dup.last_output).parent().unwrap();
-            let path = get_intermediate_path(patch_dir, j_frame);
+            let path = get_intermediate_path(&patch.dir, j_frame as usize + 1);
             if !try_exists(&path, TRY_MAX_TRIES, TRY_WAIT_DURATION) {
                 panic!("Patch frame {} does not exist", path.display());
             }
@@ -41,24 +62,27 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<DoneDuplicat
             let patch_frame = img.into_raw();
             stdin.write_all(&patch_frame).unwrap();
             j_frame += 1;
-            if j_frame >= dup.chain.frames.len() {
-                current_duplicate = None;
-                i += 1;
-                j_frame = 1;
-                info!("Patching next duplicate {}", i);
+            if j_frame >= patch.len() {
+                current_patch = None;
+                patch_index += 1;
+                j_frame = 0;
+                info!("Patching next duplicate {}", patch_index);
             }
             // Delete the patched frame to save space
-
             std::thread::spawn(move || {
                 std::thread::sleep(TRY_WAIT_DURATION); // Give ffmpeg time to load the frame
                 try_delete(path, TRY_MAX_TRIES, TRY_WAIT_DURATION).unwrap();
             });
-
         }
         frame_counter += 1;
     }
 }
 
+struct VideoParams {
+    framerate: f64,
+    width: u32,
+    height: u32,
+}
 
 fn get_video_params(file_path: impl AsRef<Path>) -> VideoParams {
     let output = Command::new("ffprobe")
@@ -98,16 +122,29 @@ fn get_video_params(file_path: impl AsRef<Path>) -> VideoParams {
     }
 }
 
+#[derive(Debug)]
+pub struct PatchArgs {
+    pub render_cq: u8,
+    pub render_preset: String,
+}
 
-pub fn patch_video(args: &Args, duplicate_receiver: Receiver<DoneDuplicate>) {
-    let params = get_video_params(&args.input_path);
+pub fn patch_video(
+    input_path: impl AsRef<Path>,
+    output_path: impl AsRef<Path>,
+    patch_args: &PatchArgs,
+    duplicate_receiver: Receiver<Patch>
+) {
+    let input_path = input_path.as_ref();
+    let output_path = output_path.as_ref();
+
+    let params = get_video_params(input_path);
 
     // Build ffmpeg command
     let mut cmd = Command::new("ffmpeg");
     //cmd.arg("-loglevel").arg("verbose");
     cmd.arg("-y");
     cmd.arg("-hwaccel").arg("cuda");
-    cmd.arg("-i").arg(args.input_path.display().to_string());
+    cmd.arg("-i").arg(input_path.display().to_string());
     cmd.arg("-f").arg("rawvideo");
     cmd.arg("-framerate").arg(params.framerate.to_string());
     cmd.arg("-pixel_format").arg("rgba");
@@ -118,11 +155,11 @@ pub fn patch_video(args: &Args, duplicate_receiver: Receiver<DoneDuplicate>) {
     cmd.arg("-map").arg("0:a");
     cmd.arg("-c:a").arg("copy");
     cmd.arg("-rc").arg("vbr");
-    cmd.arg("-cq").arg(args.render_cq.to_string());
+    cmd.arg("-cq").arg(patch_args.render_cq.to_string());
     cmd.arg("-pix_fmt").arg("yuv420p");
-    cmd.arg("-preset").arg(&args.render_preset);
+    cmd.arg("-preset").arg(&patch_args.render_preset);
     cmd.arg("-fps_mode").arg("passthrough");
-    cmd.arg(args.output_path.display().to_string());
+    cmd.arg(output_path.display().to_string());
     debug!("Running: {:?}", cmd);
 
     cmd.stdin(Stdio::piped());
@@ -137,6 +174,8 @@ pub fn patch_video(args: &Args, duplicate_receiver: Receiver<DoneDuplicate>) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
+    use image_hasher::HashAlg;
     use super::*;
 
     #[test]
@@ -145,6 +184,94 @@ mod tests {
         assert_eq!(params.width, 2560);
         assert_eq!(params.height, 1440);
         assert_eq!(params.framerate, 60.0);
+    }
+
+    fn split_to_frames(path: impl AsRef<Path>, frame_dir: impl AsRef<Path>) {
+        let path = path.as_ref();
+        let frame_dir = frame_dir.as_ref();
+
+        if !frame_dir.exists() {
+            std::fs::create_dir_all(frame_dir).expect("Should create frame test dir");
+        }
+
+        let mut ffmpeg = Command::new("ffmpeg")
+            .arg("-i")
+            .arg(path.display().to_string())
+            .arg("-start_number").arg("0")
+            .arg(format!("{}/%05d.png", frame_dir.display()))
+            .spawn()
+            .expect("Should spawn ffmpeg");
+        let status = ffmpeg.wait().unwrap();
+        if !status.success() {
+            panic!("ffmpeg exited with status {}", status);
+        }
+
+        //std::fs::remove_dir_all(frame_dir).expect("Should delete frame test dir");
+    }
+
+    fn shallow_copy_dir(src: impl AsRef<Path>, dst: impl AsRef<Path>) {
+        let src = src.as_ref();
+        let dst = dst.as_ref();
+        std::fs::create_dir_all(dst).expect("Should create dir");
+        for entry in std::fs::read_dir(src).expect("Should read dir").filter_map(Result::ok) {
+            if entry.file_type().expect("should get file type").is_file() {
+                let file_dst = dst.join(entry.file_name());
+                std::fs::copy(entry.path(), file_dst).expect("Should copy file");
+            }
+        }
+    }
+
+    fn assert_matching_image(a: impl AsRef<Path>, b: impl AsRef<Path>) {
+        let img_a = image::open(a).expect("Should open image");
+        let img_b = image::open(b).expect("Should open image");
+        let hash_width = 8;
+        let hash_height = 8;
+
+        let hasher = image_hasher::HasherConfig::new()
+            .hash_size(hash_width, hash_height)
+            .resize_filter(image::imageops::FilterType::Lanczos3)
+            .hash_alg(HashAlg::Gradient)
+            .to_hasher();
+
+        let hash_a = hasher.hash_image(&img_a);
+        let hash_b = hasher.hash_image(&img_b);
+        assert_eq!(hash_a, hash_b, "Image hashes do not match");
+    }
+
+    #[test]
+    fn test_one_patch() {
+        // Patch
+        let (sender, receiver) = mpsc::channel::<Patch>();
+        let patch_dir = PathBuf::from("tests/one_patch");
+        let temp_patch_dir = PathBuf::from("tmp/one_patch");
+        shallow_copy_dir(&patch_dir, &temp_patch_dir);
+        let patch = Patch {
+            start_frame: 5,
+            end_frame: 8,
+            dir: temp_patch_dir.clone(),
+        };
+        std::thread::spawn(move || {
+            sender.send(patch)
+        });
+        let patch_args = PatchArgs {
+            render_cq: 25,
+            render_preset: "p4".to_string(),
+        };
+        let patched_path = Path::new("tmp/one_patch.mkv");
+        patch_video("tests/test.mkv", patched_path, &patch_args, receiver);
+        assert!(std::fs::read_dir(&temp_patch_dir).expect("Tmp patch dir should exist").next().is_none(), "Patch dir content should be delted");
+
+        // Check for patched
+        let split_frames = Path::new("tmp/frames/one_patch");
+        split_to_frames(patched_path, split_frames);
+        assert_matching_image(patch_dir.join("001.png"), split_frames.join("00005.png"));
+        assert_matching_image(patch_dir.join("002.png"), split_frames.join("00006.png"));
+        assert_matching_image(patch_dir.join("003.png"), split_frames.join("00007.png"));
+        assert_matching_image(patch_dir.join("004.png"), split_frames.join("00008.png"));
+
+        // Cleanup
+        std::fs::remove_dir_all(split_frames).expect("Should remove");
+        std::fs::remove_file(patched_path).expect("Should remove");
     }
 
 }

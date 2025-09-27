@@ -8,8 +8,9 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use fern::Dispatch;
 use log::{error, info};
 use mimalloc::MiMalloc;
-use rife::{DoneDuplicate, Rife};
+use rife::Rife;
 use utils::{TRY_MAX_TRIES, TRY_WAIT_DURATION};
+use crate::patch::{Patch, PatchArgs};
 
 pub const RIFE_PATH: &str = "rife-ncnn-vulkan";
 
@@ -130,19 +131,27 @@ fn main() {
 
     let start = std::time::Instant::now();
 
-    let (duplicate_sender, duplicate_receiver) = std::sync::mpsc::channel::<DoneDuplicate>();
+    let (patch_sender, patch_receiver) = std::sync::mpsc::channel::<Patch>();
     let mut rife= Rife::start(RIFE_PATH, &args.rife_model_path, move |done_duplicate| {
         // Sometimes RIFE still holds the files lock for some reason, even after reporting "done".
         utils::try_delete(&done_duplicate.input0, TRY_MAX_TRIES, TRY_WAIT_DURATION).unwrap_or_else(|_| error!("Could not remove {}", done_duplicate.input0));
         utils::try_delete(&done_duplicate.input1, TRY_MAX_TRIES, TRY_WAIT_DURATION).unwrap_or_else(|_| error!("Could not remove {}", done_duplicate.input0));
         // Tell the patcher to insert this
-        duplicate_sender.send(done_duplicate).unwrap();
+        patch_sender.send(done_duplicate.into()).unwrap();
     });
 
     if !args.find_only {
-        let args_copy = args.clone();
-        let patch_thread = std::thread::spawn(move || patch::patch_video(&args_copy, duplicate_receiver));
+        let patch_args = PatchArgs {
+            render_cq: args.render_cq,
+            render_preset: args.render_preset.clone(),
+        };
+        let input_path = args.input_path.clone();
+        let output_path = args.output_path.clone();
+        let patch_thread = std::thread::spawn(move ||
+            patch::patch_video(input_path, output_path, &patch_args, patch_receiver)
+        );
         std::thread::sleep(std::time::Duration::from_millis(500));
+
         find::find_duplicates(&args, &mut rife);
         rife.complete();
         patch_thread.join().unwrap();
