@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use ffmpeg_sidecar::command::FfmpegCommand;
 use std::fs;
 use std::ops::Deref;
-
+use log::{debug, info, warn};
 use crate::Args;
 use crate::rife::Rife;
 use frame_compare::FrameDifference;
@@ -71,56 +71,6 @@ impl PartialEq for FindState {
     }
 }
 
-/*
-#[derive(Default)]
-struct FindChainState {
-    frames: Vec<OutputVideoFrame>,
-    kind: FindState,
-}
-
-impl FindChainState {
-
-    pub fn push(&mut self, frame: OutputVideoFrame) {
-        self.frames.push(frame);
-        match &mut self.kind {
-            FindState::Empty => self.kind = FindState::FindDuplicate,
-            FindState::FindDuplicate => {},
-            FindState::CompensateMotion { n_additional} => *n_additional += 1,
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.frames.clear();
-        self.kind = FindState::Empty;
-    }
-
-    pub fn last(&self) -> Option<&OutputVideoFrame> {
-        self.frames.last()
-    }
-
-    pub fn iter(&mut self) -> impl Iterator<Item = &OutputVideoFrame> {
-        self.frames.iter()
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut OutputVideoFrame> {
-        self.frames.iter_mut()
-    }
-
-    pub fn len(&self) -> usize {
-        self.frames.len()
-    }
-
-    pub fn remove(&mut self, i: u32) -> OutputVideoFrame {
-        let frame = self.frames.remove(i as usize);
-        if self.frames.is_empty() {
-            self.kind = FindState::Empty;
-        }
-        frame
-    }
-
-}*/
-
-
 fn frame_to_image(frame: OutputVideoFrame) -> RgbImage {
     image::ImageBuffer::from_vec(frame.width, frame.height, frame.data).unwrap()
 }
@@ -176,7 +126,7 @@ pub fn find_duplicates(args: &Args, rife: &mut Rife) {
             Some(previous) => frame_compare::compare_frames(previous, frame, args),
         };
         if !diff.is_finite() {
-            println!("got non-finite diff: {:?}", diff);
+            warn!("got non-finite diff: {:?}", diff);
             state = FindState::FindDuplicate;
             iter_ctx.clear();
             return;
@@ -191,12 +141,19 @@ pub fn find_duplicates(args: &Args, rife: &mut Rife) {
             end_frame: frame,
         }, args);
         match (check_result, state) {
-            (CheckChainResult::FailDuplicate, _) => {}, // skip
+            (CheckChainResult::FailDuplicate, _) => {
+                debug!("Found duplicate at #{}", frame.frame_num);
+            }, // skip
             // Lost cause, move on
             (CheckChainResult::FailShort | CheckChainResult::FailLong | CheckChainResult::FailTooMuchMotion, FindState::FindDuplicate | FindState::FailedCompensate)
             | (CheckChainResult::FailShort, FindState::CompensateMotion {..})
             | (CheckChainResult::CompensationRequired, FindState::FailedCompensate) // Give up
             => {
+                if check_result != CheckChainResult::FailShort {
+                    let start_frame = frame.frame_num as usize - iter_ctx.len();
+                    debug!("Skipping duplicate chain #{}-#{}: #{:?}, state: {:?}", start_frame, frame.frame_num, check_result, state);
+                }
+
                 vars.chain_motion = 0.0;
                 vars.recent_motion.commit(diff.motion_estimate);
                 state = FindState::FindDuplicate;
@@ -223,8 +180,8 @@ pub fn find_duplicates(args: &Args, rife: &mut Rife) {
                     diff,
                 });
                 let avg_diff = vars.avg_hash.unwrap_or(0.0);
-                println!(
-                    "Duplicates {} found #{}-#{}, length: {}, diff_ema: {:0.4}, diff: {:0.4}, chain_motion: {:0.4}, state: {:?}, at {:.3}s",
+                info!(
+                    "Duplicate chain {} found #{}-#{}, length: {}, diff_ema: {:0.4}, diff: {:0.4}, chain_motion: {:0.4}, state: {:?}, at {:.3}s",
                     vars.chain_i, chain.frames[0], chain.frames.last().unwrap(), chain.frames.len(), avg_diff, vars.last_diff, vars.chain_motion, state, chain.timestamps[0]
                 );
 
@@ -259,7 +216,7 @@ pub fn find_duplicates(args: &Args, rife: &mut Rife) {
         vars.last_diff = diff.hash_distance;
     });
 
-    println!("Finding Duplicates Took: {}s", s.elapsed().as_secs_f32());
+    info!("Finding Duplicates Took: {}s", s.elapsed().as_secs_f32());
 }
 
 
@@ -304,7 +261,7 @@ fn check_chain(data: ProcessChainData, args: &Args) -> CheckChainResult {
         return CheckChainResult::FailShort;
     }
     // Check motion compensation
-    if len >= args.motion_compensate_start + 1 {
+    if len > args.motion_compensate_start {
         let recent_motion = vars.recent_motion.unwrap_or(0.0);
         // Ask for less compensation if we failed it before
         // That way there will at least be slightly flawed (slow) interpolation rather than a freeze-frame.

@@ -3,6 +3,7 @@ use std::process::{ChildStdin, Command, Stdio};
 use image::RgbaImage;
 use std::io::Write;
 use std::path::Path;
+use log::{debug, info};
 use crate::Args;
 use crate::rife::{get_intermediate_path, DoneDuplicate};
 use crate::utils::{try_delete, try_exists, TRY_MAX_TRIES, TRY_WAIT_DURATION};
@@ -44,7 +45,7 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<DoneDuplicat
                 current_duplicate = None;
                 i += 1;
                 j_frame = 1;
-                println!("Patching next duplicate {}", i);
+                info!("Patching next duplicate {}", i);
             }
             // Delete the patched frame to save space
 
@@ -122,7 +123,7 @@ pub fn patch_video(args: &Args, duplicate_receiver: Receiver<DoneDuplicate>) {
     cmd.arg("-preset").arg(&args.render_preset);
     cmd.arg("-fps_mode").arg("passthrough");
     cmd.arg(args.output_path.display().to_string());
-    println!("Running: {:?}", cmd);
+    debug!("Running: {:?}", cmd);
 
     cmd.stdin(Stdio::piped());
     let mut ffmpeg = cmd.spawn().unwrap();
@@ -131,7 +132,7 @@ pub fn patch_video(args: &Args, duplicate_receiver: Receiver<DoneDuplicate>) {
     drop(stdin);
 
     let status = ffmpeg.wait().unwrap();
-    println!("ffmpeg exited with: {}", status);
+    info!("ffmpeg exited with {}", status);
 }
 
 #[cfg(test)]

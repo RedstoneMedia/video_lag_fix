@@ -32,9 +32,9 @@ where
     /// Consume the driver and run the closure for each (possibly re-emitted) item.
     ///
     /// Closure gets:
-    /// - &mut S for state
-    /// - &T for the current item (zero-copy on the hot path)
-    /// - &mut ForEachCtx for history ops and backtracking
+    /// - &mut S for state (snapshoted)
+    /// - &T for the current item
+    /// - &mut ForEachCtx for history and backtracking
     pub fn for_each<F>(mut self, mut body: F) -> S
     where
         F: FnMut(&mut S, &T, &mut BacktrackCtx<S, T>),

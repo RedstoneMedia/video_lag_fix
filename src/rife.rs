@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::process::{Child, ChildStderr, ChildStdin, Command, ExitStatus, Stdio};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use log::{debug, error, info};
 use crate::find::DuplicateChain;
 
 type OpenRIFEJobs = Arc<Mutex<HashMap<String, DuplicateChain>>>;
@@ -25,10 +26,10 @@ impl Rife {
 
     fn done_task(stdout: ChildStderr, open_jobs: OpenRIFEJobs, on_done: impl Fn(DoneDuplicate)) {
         let reader = BufReader::new(stdout);
-        let done_regex = regex::Regex::new(r"^(?P<in0>.+) (?P<in1>.+) (?P<s>[01]\.[0-9]+) -> (?P<out>.+?) done$").unwrap();
+        let done_regex = regex::Regex::new(r"^(?P<in0>\S+) (?P<in1>\S+) (?P<s>[01]\.\d+) -> (?P<out>.+?) done( \(q - (?P<q>\d+\.\d+)%\))?$").unwrap();
         for line in reader.lines() {
             let Ok(line) = line else {
-                println!("RIFE Error {:?}", line.err().unwrap());
+                error!("RIFE Error {:?}", line.err().unwrap());
                 continue;
             };
             match done_regex.captures(&line) {
@@ -49,13 +50,13 @@ impl Rife {
                         });
                     }
                 },
-                None => println!("{}", line)
+                None => info!("RIFE: {}", line)
             }
         }
     }
 
     pub fn start(rife_path: impl AsRef<Path>, model_path: impl AsRef<Path>, on_done: impl Fn(DoneDuplicate) + Send + 'static) -> Self {
-        let mut command = Command::new(rife_path.as_ref());
+        let mut command = Command::new(rife_path.as_ref().join("build/rife-ncnn-vulkan"));
         command
             .arg("-o").arg("dummy.webp")
             .arg("-c")
@@ -64,8 +65,8 @@ impl Rife {
             .stdin(Stdio::piped())
             .stderr(Stdio::piped());
 
-        println!("{:?}", command);
-        let mut child = command.spawn().unwrap();
+        debug!("Running {:?}", command);
+        let mut child = command.spawn().expect("RIFE should spawn");
         let stdin = child.stdin.take().unwrap();
 
         let open_jobs = Arc::new(Mutex::new(HashMap::new()));

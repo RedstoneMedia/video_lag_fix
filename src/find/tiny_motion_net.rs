@@ -6,7 +6,7 @@ use ort::session::{builder::GraphOptimizationLevel, Session};
 use ort::inputs;
 use ort::value::Tensor;
 
-
+const MODEL_PATH: &str = "MotionPredictor/v8.onnx";
 const INPUT_SIZE: (usize, usize) = (320, 180);
 const THREADS: usize = 3;
 
@@ -14,7 +14,7 @@ static SESSION: Lazy<Arc<Mutex<Session>>> = Lazy::new(|| {
     let session = Session::builder().expect("Could not create ONX builder")
         .with_optimization_level(GraphOptimizationLevel::Level3).expect("Could not set optimization level")
         .with_intra_threads(THREADS).expect("Could not setup ONX threads")
-        .commit_from_file("MotionPredictor/v8.onnx").expect("Could not load ONX model");
+        .commit_from_file(MODEL_PATH).expect("Could not load ONX model");
     Arc::new(Mutex::new(session))
 });
 
@@ -63,7 +63,7 @@ mod tests {
         for _ in 0..n {
             let image = Tensor::from_array(([1, 1, 180, 320], vec![0.0f32; 1*180*320])).unwrap();
             let preds = model.run(inputs!["input" => image]).unwrap();
-            let (_, motion): (_, &[f32]) = preds.get("output").unwrap().try_extract_tensor().unwrap();
+            let (_, _): (_, &[f32]) = preds.get("output").unwrap().try_extract_tensor().unwrap();
         }
         let secs = t.elapsed().as_secs_f64() / n as f64;
         println!("{:.01} MP/S", 1.0 / secs);
