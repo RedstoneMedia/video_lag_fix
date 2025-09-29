@@ -84,12 +84,12 @@ struct Args {
     #[arg(long, default_value_t = 70, verbatim_doc_comment)]
     diff_hash_resize: u32,
 
-    /// Constant quality value for output video encoder (lower is better)
-    #[arg(long, default_value_t = 27)]
-    render_cq: u8,
-    /// Render preset for output video encoder
-    #[arg(long, default_value = "p4")]
-    render_preset: String,
+    /// The method of hardware acceleration for ffmpeg to use
+    #[arg(long, default_value = "cuda")]
+    render_hwaccel: Option<String>,
+    /// Space seperated output args passed to ffmpeg
+    #[arg(short, long, default_value = "-c:v av1_nvenc -preset p7 -rc vbr -cq 36 -rc-lookahead 48 -spatial-aq 1 -aq-strength 10 -multipass 2 -pix_fmt yuv420p -map 0:a -c:a libopus -b:a 48k")]
+    render_args: String,
 
     /// Only find duplicates, do not patch video
     #[arg(long, action)]
@@ -127,24 +127,26 @@ fn main() {
         std::process::exit(1);
     }
     setup_logging(&args);
-    info!("Processing: {}", args.input_path.display());
+    info!("Processing: \"{}\" to \"{}\"", args.input_path.display(), args.output_path.display());
 
     let start = std::time::Instant::now();
 
     let (patch_sender, patch_receiver) = std::sync::mpsc::channel::<Patch>();
     let mut rife= Rife::start(RIFE_PATH, &args.rife_model_path, move |done_duplicate| {
         // Sometimes RIFE still holds the files lock for some reason, even after reporting "done".
-        utils::try_delete(&done_duplicate.input0, TRY_MAX_TRIES, TRY_WAIT_DURATION).unwrap_or_else(|_| error!("Could not remove {}", done_duplicate.input0));
-        utils::try_delete(&done_duplicate.input1, TRY_MAX_TRIES, TRY_WAIT_DURATION).unwrap_or_else(|_| error!("Could not remove {}", done_duplicate.input0));
+        utils::try_delete(&done_duplicate.input0, TRY_MAX_TRIES, TRY_WAIT_DURATION)
+            .unwrap_or_else(|_| error!("Could not remove {}", done_duplicate.input0));
+        utils::try_delete(&done_duplicate.input1, TRY_MAX_TRIES, TRY_WAIT_DURATION)
+            .unwrap_or_else(|_| error!("Could not remove {}", done_duplicate.input0));
         // Tell the patcher to insert this
         patch_sender.send(done_duplicate.into()).unwrap();
     });
 
     if !args.find_only {
-        let patch_args = PatchArgs {
-            render_cq: args.render_cq,
-            render_preset: args.render_preset.clone(),
-        };
+        let patch_args = PatchArgs::new(
+            args.render_hwaccel.clone(),
+            args.render_args.split(' ')
+        );
         let input_path = args.input_path.clone();
         let output_path = args.output_path.clone();
         let patch_thread = std::thread::spawn(move ||

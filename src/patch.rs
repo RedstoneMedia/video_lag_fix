@@ -46,11 +46,13 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<Patch>, para
     loop {
         if current_patch.is_none() {
             let Ok(duplicate) = duplicate_receiver.recv() else {break};
+            assert!(duplicate.end_frame >= duplicate.start_frame);
             current_patch = Some(duplicate);
         }
-        let patch = &current_patch.as_ref().unwrap();
+        let patch = current_patch.as_ref().unwrap();
 
         let show_frame = patch.start_frame + j_frame;
+        assert!(show_frame >= frame_counter, "{} >= {}", show_frame, frame_counter);
         if show_frame != frame_counter {
             stdin.write_all(&transparent_frame).unwrap();
         } else {
@@ -66,7 +68,7 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<Patch>, para
                 current_patch = None;
                 patch_index += 1;
                 j_frame = 0;
-                info!("Patching next duplicate {}", patch_index);
+                debug!("Patching next {}", patch_index);
             }
             // Delete the patched frame to save space
             std::thread::spawn(move || {
@@ -124,8 +126,22 @@ fn get_video_params(file_path: impl AsRef<Path>) -> VideoParams {
 
 #[derive(Debug)]
 pub struct PatchArgs {
-    pub render_cq: u8,
-    pub render_preset: String,
+    pub hw_acceleration: Option<String>,
+    pub output_args: Vec<String>,
+}
+
+impl PatchArgs {
+
+    pub fn new<I, S>(hw_acceleration: Option<String>, video_output_args: I) -> Self where
+        I: IntoIterator<Item = S>,
+        S: ToString
+    {
+        Self {
+            hw_acceleration,
+            output_args: video_output_args.into_iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
 }
 
 pub fn patch_video(
@@ -137,13 +153,24 @@ pub fn patch_video(
     let input_path = input_path.as_ref();
     let output_path = output_path.as_ref();
 
-    let params = get_video_params(input_path);
+    // Validate args
+    fn deny_args(args: &[String], denied_args: &[&str]) {
+        for denied in denied_args {
+            if args.contains(&denied.to_string()) {
+                panic!("Ffmpeg argument is now allowed to be specified: {}", denied);
+            }
+        }
+    }
+    deny_args(&patch_args.output_args, &["-i", "-f", "-filter_complex", "-fps_mode"]);
 
     // Build ffmpeg command
+    let params = get_video_params(input_path);
     let mut cmd = Command::new("ffmpeg");
     //cmd.arg("-loglevel").arg("verbose");
     cmd.arg("-y");
-    cmd.arg("-hwaccel").arg("cuda");
+    if let Some(hw_acceleration) = &patch_args.hw_acceleration {
+        cmd.arg("-hwaccel").arg(hw_acceleration);
+    }
     cmd.arg("-i").arg(input_path.display().to_string());
     cmd.arg("-f").arg("rawvideo");
     cmd.arg("-framerate").arg(params.framerate.to_string());
@@ -151,13 +178,7 @@ pub fn patch_video(
     cmd.arg("-video_size").arg(format!("{}x{}", params.width, params.height));
     cmd.arg("-i").arg("-");
     cmd.arg("-filter_complex").arg("[0:v][1:v]overlay=0:0:eof_action=pass:format=auto");
-    cmd.arg("-c:v").arg("hevc_nvenc");
-    cmd.arg("-map").arg("0:a");
-    cmd.arg("-c:a").arg("copy");
-    cmd.arg("-rc").arg("vbr");
-    cmd.arg("-cq").arg(patch_args.render_cq.to_string());
-    cmd.arg("-pix_fmt").arg("yuv420p");
-    cmd.arg("-preset").arg(&patch_args.render_preset);
+    cmd.args(&patch_args.output_args);
     cmd.arg("-fps_mode").arg("passthrough");
     cmd.arg(output_path.display().to_string());
     debug!("Running: {:?}", cmd);
@@ -180,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_get_video_params() {
-        let params = get_video_params("trimm.mkv");
+        let params = get_video_params("tests/test.mkv");
         assert_eq!(params.width, 2560);
         assert_eq!(params.height, 1440);
         assert_eq!(params.framerate, 60.0);
@@ -253,10 +274,17 @@ mod tests {
         std::thread::spawn(move || {
             sender.send(patch)
         });
-        let patch_args = PatchArgs {
-            render_cq: 25,
-            render_preset: "p4".to_string(),
-        };
+
+        let patch_args = PatchArgs::new(
+            None,
+            [
+                "-c:v", "h264",
+                "-crf", "19",
+                "-preset", "slow",
+                "-pix_fmt", "yuv420p",
+                "-an",
+            ],
+        );
         let patched_path = Path::new("tmp/one_patch.mkv");
         patch_video("tests/test.mkv", patched_path, &patch_args, receiver);
         assert!(std::fs::read_dir(&temp_patch_dir).expect("Tmp patch dir should exist").next().is_none(), "Patch dir content should be delted");

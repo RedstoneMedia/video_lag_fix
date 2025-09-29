@@ -1,17 +1,18 @@
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::process::{Child, ChildStderr, ChildStdin, Command, ExitStatus, Stdio};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use log::{debug, error, info};
 use crate::find::DuplicateChain;
 
-type OpenRIFEJobs = Arc<Mutex<HashMap<String, DuplicateChain>>>;
+type OpenRIFEJobs = Arc<Mutex<HashMap<String, (usize, DuplicateChain)>>>;
 
 pub struct Rife {
     child: Child,
     stdin: ChildStdin,
-    open_jobs: OpenRIFEJobs
+    open_jobs: OpenRIFEJobs,
+    job_counter: usize,
 }
 
 
@@ -27,6 +28,10 @@ impl Rife {
     fn done_task(stdout: ChildStderr, open_jobs: OpenRIFEJobs, on_done: impl Fn(DoneDuplicate)) {
         let reader = BufReader::new(stdout);
         let done_regex = regex::Regex::new(r"^(?P<in0>\S+) (?P<in1>\S+) (?P<s>[01]\.\d+) -> (?P<out>.+?) done( \(q - (?P<q>\d+\.\d+)%\))?$").unwrap();
+
+        let mut done_buffer = BTreeMap::new();
+        let mut expected_job = 0usize;
+
         for line in reader.lines() {
             let Ok(line) = line else {
                 error!("RIFE Error {:?}", line.err().unwrap());
@@ -39,15 +44,22 @@ impl Rife {
                     let output = captures.name("out").unwrap().as_str();
 
                     let mut open_jobs = open_jobs.lock().unwrap();
-                    let val = format!("{}-{}-{}", input0, input1, output);
+                    let key = format!("{}-{}-{}", input0, input1, output);
 
-                    if let Some(chain) = open_jobs.remove(&val) {
-                        on_done(DoneDuplicate {
+                    if let Some((job_i, chain)) = open_jobs.remove(&key) {
+                        debug!("RIFE: completed key: {}, job: {}", key, job_i);
+                        // We insert into a btree, so that the jobs are always yielded in the order they were requested
+                        done_buffer.insert(job_i, DoneDuplicate {
                             input0: input0.to_string(),
                             input1: input1.to_string(),
                             last_output: output.to_string(),
                             chain,
                         });
+                        // Yield sorted
+                        while let Some(done_duplicate) = done_buffer.remove(&expected_job) {
+                            on_done(done_duplicate);
+                            expected_job += 1;
+                        }
                     }
                 },
                 None => info!("RIFE: {}", line)
@@ -75,11 +87,14 @@ impl Rife {
             let open_jobs = open_jobs.clone();
             std::thread::spawn(move || Self::done_task(stderr, open_jobs, on_done));
         }
-        Self { child, stdin, open_jobs }
+        Self { child, stdin, open_jobs, job_counter: 0 }
     }
 
 
     pub fn generate_in_betweens(&mut self, duplicate_chain: DuplicateChain, dir: impl AsRef<Path>) {
+        if let Ok(Some(exit_status)) = self.child.try_wait() {
+            panic!("Cannot generate in betweens: RIFE exited with status {}", exit_status);
+        }
         let dir = dir.as_ref();
 
         let in_path = duplicate_chain.frames_dir.join("0.webp");
@@ -96,7 +111,8 @@ impl Rife {
                 let mut open_jobs = self.open_jobs.lock().unwrap();
                 let key = format!("{}-{}-{}", in_path.display(), next_path.display(), p.display());
                 let duplicate_chain = duplicate_chain.take().expect("Can never fail, only taken once");
-                open_jobs.insert(key, duplicate_chain);
+                open_jobs.insert(key, (self.job_counter, duplicate_chain));
+                self.job_counter += 1;
             }
         }
     }

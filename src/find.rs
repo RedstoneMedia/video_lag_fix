@@ -119,6 +119,7 @@ pub fn find_duplicates(args: &Args, rife: &mut Rife) {
     let mut state = FindState::FindDuplicate;
     let vars = IterVars::from_args(args);
     let max_history = args.max_duplicates * 2 + 1; // Kind of makes sense if you want the full history while backtracking. +1 to detect too long
+    let mut last_found_frame = 0u32;
     let frames_backtrack = Backtrackable::new(iter.filter_frames(), vars, max_history);
     frames_backtrack.for_each(|vars, frame, iter_ctx| {
         let diff = match iter_ctx.last() {
@@ -185,6 +186,9 @@ pub fn find_duplicates(args: &Args, rife: &mut Rife) {
                     vars.chain_i, chain.frames[0], chain.frames.last().unwrap(), chain.frames.len(), avg_diff, vars.last_diff, vars.chain_motion, state, chain.timestamps[0]
                 );
 
+                assert!(last_found_frame < chain.frames[0], "Sequential sanity check {} < {}", last_found_frame, chain.frames[0]);
+                last_found_frame = chain.frames[0];
+
                 vars.chain_i += 1;
                 let patch_dir = format!("tmp/patch_{}", vars.chain_i);
                 fs::create_dir_all(&patch_dir).expect("Creating patch dir should not fail");
@@ -205,14 +209,6 @@ pub fn find_duplicates(args: &Args, rife: &mut Rife) {
             vars.slow_avg_motion.commit(diff.motion_estimate);
         }
 
-        /*
-        let chain_length = current_chain.len();
-        if chain_length > args.max_duplicates {
-            // Free up memory from too long chains using dummy frames
-            current_chain.iter_mut().for_each(|f| f.data.clear());
-        }*/
-
-        //current_chain.push(frame);
         vars.last_diff = diff.hash_distance;
     });
 
