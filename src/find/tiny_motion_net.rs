@@ -7,7 +7,7 @@ use ort::inputs;
 use ort::value::Tensor;
 
 const MODEL_PATH: &str = "MotionPredictor/v8.onnx";
-const INPUT_SIZE: (usize, usize) = (320, 180);
+pub const INPUT_SIZE: (usize, usize) = (320, 180);
 const THREADS: usize = 3;
 
 static SESSION: Lazy<Arc<Mutex<Session>>> = Lazy::new(|| {
@@ -18,9 +18,7 @@ static SESSION: Lazy<Arc<Mutex<Session>>> = Lazy::new(|| {
     Arc::new(Mutex::new(session))
 });
 
-
-pub fn predict_motion(img_a: &Image, img_b: &Image) -> f32 {
-    // Resize
+pub fn preprocess_image(gray_img: &Image) -> Image<'static> {
     let mut resizer = Resizer::new();
     #[cfg(target_arch = "x86_64")]
     unsafe {
@@ -28,16 +26,19 @@ pub fn predict_motion(img_a: &Image, img_b: &Image) -> f32 {
     }
     let resize_options = ResizeOptions::new()
         .resize_alg(ResizeAlg::Convolution(FilterType::CatmullRom));
-    let width = INPUT_SIZE.0;
-    let height = INPUT_SIZE.1;
-    let mut resized_a = Image::new(width as u32, height as u32, PixelType::U8);
-    let mut resized_b = Image::new(width as u32, height as u32, PixelType::U8);
-    resizer.resize(img_a, &mut resized_a, &resize_options).unwrap();
-    resizer.resize(img_b, &mut resized_b, &resize_options).unwrap();
+    let mut resized = Image::new(INPUT_SIZE.0 as u32, INPUT_SIZE.1 as u32, PixelType::U8);
+    resizer.resize(gray_img, &mut resized, &resize_options).unwrap();
+    resized
+}
+
+/// Predicts the motion between two images
+///
+/// [preprocess_image] is expected to already be applied to the images
+pub fn predict_motion(img_a: &Image, img_b: &Image) -> f32 {
     // Diff
-    let diff = resized_a.into_vec().into_iter().zip(resized_b.into_vec())
-        .map(|(a, b)| a as f32 / 255.0 - b as f32 / 255.0).collect::<Vec<_>>();
-    let input = Tensor::from_array(([1, 1, height, width], diff)).expect("Difference shape mismatch");
+    let diff = img_a.buffer().into_iter().zip(img_b.buffer())
+        .map(|(a, b)| *a as f32 / 255.0 - *b as f32 / 255.0).collect::<Vec<_>>();
+    let input = Tensor::from_array(([1, 1, INPUT_SIZE.1, INPUT_SIZE.0], diff)).expect("Difference shape mismatch");
     // Predict
     let mut session = SESSION.lock().expect("Could not lock ONNX session");
     let preds = session.run(inputs!["input" => input]).expect("Could not run model");

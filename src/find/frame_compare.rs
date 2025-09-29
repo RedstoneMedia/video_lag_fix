@@ -1,7 +1,7 @@
 use ffmpeg_sidecar::event::OutputVideoFrame;
 use fast_image_resize::images::Image;
 use fast_image_resize::{CpuExtensions, FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
-use image_hasher::HashAlg;
+use image_hasher::{HashAlg, ImageHash};
 use image::DynamicImage;
 use crate::Args;
 use crate::find::tiny_motion_net;
@@ -43,19 +43,22 @@ impl FrameDifference {
     }
 }
 
-pub fn compare_frames(a: &OutputVideoFrame, b: &OutputVideoFrame, args: &Args) -> FrameDifference {
-    assert_eq!(a.width, b.width);
-    assert_eq!(a.height, b.height);
-    // Grayscale
-    let gray_a = to_grayscale(a);
-    let gray_b = to_grayscale(b);
-    let img_a = Image::from_vec_u8(a.width, a.height, gray_a, PixelType::U8).expect("Image buffer should be valid");
-    let img_b = Image::from_vec_u8(b.width, b.height, gray_b, PixelType::U8).expect("Image buffer should be valid");
-    // Calc motion
-    let motion_estimate = tiny_motion_net::predict_motion(&img_a, &img_b);
+#[derive(Debug)]
+pub struct PreprocessedFrame {
+    pub hash: ImageHash,
+    pub motion_image: Image<'static>,
+    pub hash_width: u32,
+    pub hash_height: u32
+}
+
+pub fn preprocess_frame(frame: &OutputVideoFrame, args: &Args) -> PreprocessedFrame {
+    let gray = to_grayscale(frame);
+    let gray_img = Image::from_vec_u8(frame.width, frame.height, gray, PixelType::U8).expect("Image buffer should be valid");
+    let motion_image = tiny_motion_net::preprocess_image(&gray_img);
+
     // Setup PHash
-    let hash_width = a.width / args.diff_hash_resize;
-    let hash_height = a.height / args.diff_hash_resize;
+    let hash_width = frame.width / args.diff_hash_resize;
+    let hash_height = frame.height / args.diff_hash_resize;
     let hasher = image_hasher::HasherConfig::new()
         .hash_size(hash_width, hash_height)
         .resize_filter(image::imageops::FilterType::Nearest) // Actual resizing happened already
@@ -71,14 +74,23 @@ pub fn compare_frames(a: &OutputVideoFrame, b: &OutputVideoFrame, args: &Args) -
         .resize_alg(ResizeAlg::Convolution(FilterType::CatmullRom));
     let width = hash_width + 1; // According to HashAlg::Gradient (row-major)
     let height = hash_height;
-    let mut resized_a = DynamicImage::new(width, height, image::ColorType::L8);
-    let mut resized_b = DynamicImage::new(width, height, image::ColorType::L8);
-    resizer.resize(&img_a, &mut resized_a, &resize_options).expect("Resize should not fail");
-    resizer.resize(&img_b, &mut resized_b, &resize_options).expect("Resize should not fail");
-    // Hash
-    let hash_a = hasher.hash_image(&resized_a);
-    let hash_b = hasher.hash_image(&resized_b);
-    let hash_distance = hash_a.dist(&hash_b) as f32 / (hash_width * hash_height) as f32;
+    let mut resized = DynamicImage::new(width, height, image::ColorType::L8);
+    resizer.resize(&gray_img, &mut resized, &resize_options).expect("Resize should not fail");
+    let hash = hasher.hash_image(&resized);
+
+    PreprocessedFrame {
+        hash,
+        hash_width,
+        hash_height,
+        motion_image
+    }
+}
+
+pub fn compare_frames(a: &PreprocessedFrame, b: &PreprocessedFrame) -> FrameDifference {
+    assert_eq!(a.hash_width, b.hash_width);
+    assert_eq!(a.hash_height, b.hash_height);
+    let motion_estimate = tiny_motion_net::predict_motion(&a.motion_image, &b.motion_image);
+    let hash_distance = a.hash.dist(&b.hash) as f32 / (a.hash_width * a.hash_width) as f32;
     FrameDifference {
         hash_distance,
         motion_estimate,

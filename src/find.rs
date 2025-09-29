@@ -10,6 +10,7 @@ use crate::Args;
 use crate::rife::Rife;
 use frame_compare::FrameDifference;
 use crate::find::backtrackable::{BacktrackCtx, Backtrackable};
+use crate::find::frame_compare::{preprocess_frame, PreprocessedFrame};
 
 mod tiny_motion_net;
 mod frame_compare;
@@ -120,11 +121,15 @@ pub fn find_duplicates(args: &Args, rife: &mut Rife) {
     let vars = IterVars::from_args(args);
     let max_history = args.max_duplicates * 2 + 1; // Kind of makes sense if you want the full history while backtracking. +1 to detect too long
     let mut last_found_frame = 0u32;
-    let frames_backtrack = Backtrackable::new(iter.filter_frames(), vars, max_history);
-    frames_backtrack.for_each(|vars, frame, iter_ctx| {
+    let preprocessed_frames_iter = iter.filter_frames().map(|frame| {
+        let preprocessed_frame = preprocess_frame(&frame, args);
+        (frame, preprocessed_frame)
+    });
+    let frames_backtrack = Backtrackable::new(preprocessed_frames_iter, vars, max_history);
+    frames_backtrack.for_each(|vars, (frame, preprocessed_frame), iter_ctx| {
         let diff = match iter_ctx.last() {
             None => FrameDifference::INFINITY,
-            Some(previous) => frame_compare::compare_frames(previous, frame, args),
+            Some((_, previous)) => frame_compare::compare_frames(previous, &preprocessed_frame),
         };
         if !diff.is_finite() {
             warn!("got non-finite diff: {:?}", diff);
@@ -220,7 +225,7 @@ struct ProcessChainData<'a, 'b> {
     vars: &'a IterVars,
     diff: FrameDifference,
     state: FindState,
-    iter_ctx: &'a mut BacktrackCtx<'b, IterVars, OutputVideoFrame>,
+    iter_ctx: &'a mut BacktrackCtx<'b, IterVars, (OutputVideoFrame, PreprocessedFrame)>,
     end_frame: &'a OutputVideoFrame
 }
 
@@ -284,11 +289,11 @@ fn create_new_chain(data: ProcessChainData) -> DuplicateChain {
     let iter_ctx = data.iter_ctx;
 
     // Construct Duplicate Chain
-    let frames: Vec<_> = iter_ctx.iter().map(|f| f.frame_num).collect();
-    let timestamps: Vec<_> = iter_ctx.iter().map(|f| f.timestamp).collect();
+    let frames: Vec<_> = iter_ctx.iter().map(|(f, _)| f.frame_num).collect();
+    let timestamps: Vec<_> = iter_ctx.iter().map(|(f, _)| f.timestamp).collect();
 
     let mut chain = iter_ctx.clear_and_drain(); // clear history side effect to avoid cloning large frames
-    let start_image = frame_to_image(chain.pop_front().expect("Chain should have frame"));
+    let start_image = frame_to_image(chain.pop_front().expect("Chain should have frame").0);
     let end_image = frame_to_image(data.end_frame.clone());
 
     let frames_path = Path::new("tmp/frames");
