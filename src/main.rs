@@ -2,6 +2,7 @@ mod patch;
 mod find;
 mod rife;
 mod utils;
+mod dev;
 
 use std::path::PathBuf;
 use clap::{CommandFactory, FromArgMatches, Parser};

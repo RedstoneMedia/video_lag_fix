@@ -9,33 +9,38 @@ use crate::rife::{get_intermediate_path, DoneDuplicate};
 use crate::utils::{get_video_params, try_delete, try_exists, VideoParams, TRY_MAX_TRIES, TRY_WAIT_DURATION};
 
 /// A sequential patch to a video.
-///
-/// Ranges are inclusive.
+#[derive(Debug, Clone)]
 pub struct Patch {
-    pub start_frame: u32,
-    pub end_frame: u32,
-    pub imgs: VecDeque<PathBuf>
+    start: u32,
+    imgs: VecDeque<PathBuf>
 }
 
 impl Patch {
+    pub fn new(start: u32, imgs: VecDeque<PathBuf>) -> Self {
+        Self { start, imgs }
+    }
+
+    pub fn start(&self) -> u32 {
+        self.start
+    }
+
     pub fn len(&self) -> u32 {
-        self.end_frame - self.start_frame + 1
+        self.imgs.len() as u32
     }
 }
 
 impl From<DoneDuplicate> for Patch {
     fn from(value: DoneDuplicate) -> Self {
-        let start_frame = value.chain.frames[1]; // 1 because 0 is not a duplicate
-        let end_frame = *value.chain.frames.last().unwrap();
-        let len = end_frame - start_frame;
+        let start = value.chain.frames[1]; // 1 because 0 is not a duplicate
+        let end = *value.chain.frames.last().unwrap();
+        let len = end - start;
         let dir = Path::new(&value.last_output).parent()
             .expect("Should have parent directory");
         let imgs = (0..len)
             .map(|i| get_intermediate_path(dir, i as usize))
             .collect();
         Self {
-            start_frame,
-            end_frame,
+            start,
             imgs,
         }
     }
@@ -45,24 +50,38 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<Patch>, para
     let transparent_frame = RgbaImage::new(params.width, params.height).into_raw();
     let mut frame_counter = 0u32;
     let mut patch_index = 0u32;
+    let mut j_frame = 0u32;
     let mut current_patch = None;
+
+    // Delete the patched frame to save space
+    fn cleanup(patch: Option<&Patch>) {
+        let Some(patch) = patch else {return};
+        let imgs = patch.imgs.clone(); // Could prob. be avoided, but eh
+        std::thread::spawn(move || {
+            std::thread::sleep(TRY_WAIT_DURATION); // Give ffmpeg time to load the frame
+            for img in imgs {
+                if !img.exists() { continue; }
+                try_delete(img, TRY_MAX_TRIES, TRY_WAIT_DURATION).unwrap();
+            }
+        });
+    }
 
     loop {
         if current_patch.is_none() {
             let Ok(duplicate) = duplicate_receiver.recv() else {break};
-            assert!(duplicate.end_frame >= duplicate.start_frame);
             current_patch = Some(duplicate);
         }
-        let patch = current_patch.as_mut().unwrap();
-        let j_frame = patch.len() - patch.imgs.len() as u32;
-        let show_frame = patch.start_frame + j_frame;
+        let patch = current_patch.as_ref().unwrap();
+        let show_frame = patch.start() + j_frame;
         assert!(show_frame >= frame_counter, "{} >= {}", show_frame, frame_counter);
         if show_frame != frame_counter {
             stdin.write_all(&transparent_frame).unwrap();
         } else {
-            let Some(path) = patch.imgs.pop_front() else {
+            let Some(path) = patch.imgs.get(j_frame as usize) else {
+                cleanup(current_patch.as_ref());
                 current_patch = None;
                 patch_index += 1;
+                j_frame = 0;
                 debug!("Patching next {}", patch_index);
                 continue;
             };
@@ -72,14 +91,11 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<Patch>, para
             let img = image::open(&path).unwrap().to_rgba8();
             let patch_frame = img.into_raw();
             stdin.write_all(&patch_frame).unwrap();
-            // Delete the patched frame to save space
-            std::thread::spawn(move || {
-                std::thread::sleep(TRY_WAIT_DURATION); // Give ffmpeg time to load the frame
-                try_delete(path, TRY_MAX_TRIES, TRY_WAIT_DURATION).unwrap();
-            });
+            j_frame += 1;
         }
         frame_counter += 1;
     }
+    cleanup(current_patch.as_ref());
 }
 
 #[derive(Debug)]
@@ -102,11 +118,14 @@ impl PatchArgs {
 
 }
 
+/// Patches a video, by inserting [Patch]es at specific frames
+///
+/// Patched images are automatically cleaned up
 pub fn patch_video(
     input_path: impl AsRef<Path>,
     output_path: impl AsRef<Path>,
     patch_args: &PatchArgs,
-    duplicate_receiver: Receiver<Patch>
+    patch_receiver: Receiver<Patch>
 ) {
     let input_path = input_path.as_ref();
     let output_path = output_path.as_ref();
@@ -144,7 +163,7 @@ pub fn patch_video(
     cmd.stdin(Stdio::piped());
     let mut ffmpeg = cmd.spawn().unwrap();
     let mut stdin = ffmpeg.stdin.take().unwrap();
-    send_frames(&mut stdin, duplicate_receiver, &params);
+    send_frames(&mut stdin, patch_receiver, &params);
     drop(stdin);
 
     let status = ffmpeg.wait().unwrap();
@@ -219,8 +238,7 @@ mod tests {
         let temp_patch_dir = PathBuf::from("tmp/one_patch");
         shallow_copy_dir(&patch_dir, &temp_patch_dir);
         let patch = Patch {
-            start_frame,
-            end_frame: start_frame + length - 1,
+            start: start_frame,
             imgs: (1..=length)
                 .map(|i| get_intermediate_path(&temp_patch_dir, i as usize))
                 .collect(),
