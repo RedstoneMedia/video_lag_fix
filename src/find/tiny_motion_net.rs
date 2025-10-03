@@ -36,7 +36,7 @@ pub fn preprocess_image(gray_img: &Image) -> Image<'static> {
 /// [preprocess_image] is expected to already be applied to the images
 pub fn predict_motion(img_a: &Image, img_b: &Image) -> f32 {
     // Diff
-    let diff = img_a.buffer().into_iter().zip(img_b.buffer())
+    let diff = img_a.buffer().iter().zip(img_b.buffer())
         .map(|(a, b)| *a as f32 / 255.0 - *b as f32 / 255.0).collect::<Vec<_>>();
     let input = Tensor::from_array(([1, 1, INPUT_SIZE.1, INPUT_SIZE.0], diff)).expect("Difference shape mismatch");
     // Predict

@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::mpsc::Receiver;
 use std::process::{ChildStdin, Command, Stdio};
 use image::RgbaImage;
@@ -5,7 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use log::{debug, info};
 use crate::rife::{get_intermediate_path, DoneDuplicate};
-use crate::utils::{try_delete, try_exists, TRY_MAX_TRIES, TRY_WAIT_DURATION};
+use crate::utils::{get_video_params, try_delete, try_exists, VideoParams, TRY_MAX_TRIES, TRY_WAIT_DURATION};
 
 /// A sequential patch to a video.
 ///
@@ -13,7 +14,7 @@ use crate::utils::{try_delete, try_exists, TRY_MAX_TRIES, TRY_WAIT_DURATION};
 pub struct Patch {
     pub start_frame: u32,
     pub end_frame: u32,
-    pub dir: PathBuf,
+    pub imgs: VecDeque<PathBuf>
 }
 
 impl Patch {
@@ -26,12 +27,16 @@ impl From<DoneDuplicate> for Patch {
     fn from(value: DoneDuplicate) -> Self {
         let start_frame = value.chain.frames[1]; // 1 because 0 is not a duplicate
         let end_frame = *value.chain.frames.last().unwrap();
+        let len = end_frame - start_frame;
         let dir = Path::new(&value.last_output).parent()
-            .expect("Should have parent directory").to_path_buf();
+            .expect("Should have parent directory");
+        let imgs = (0..len)
+            .map(|i| get_intermediate_path(dir, i as usize))
+            .collect();
         Self {
             start_frame,
             end_frame,
-            dir,
+            imgs,
         }
     }
 }
@@ -40,7 +45,6 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<Patch>, para
     let transparent_frame = RgbaImage::new(params.width, params.height).into_raw();
     let mut frame_counter = 0u32;
     let mut patch_index = 0u32;
-    let mut j_frame = 0;
     let mut current_patch = None;
 
     loop {
@@ -49,27 +53,25 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<Patch>, para
             assert!(duplicate.end_frame >= duplicate.start_frame);
             current_patch = Some(duplicate);
         }
-        let patch = current_patch.as_ref().unwrap();
-
+        let patch = current_patch.as_mut().unwrap();
+        let j_frame = patch.len() - patch.imgs.len() as u32;
         let show_frame = patch.start_frame + j_frame;
         assert!(show_frame >= frame_counter, "{} >= {}", show_frame, frame_counter);
         if show_frame != frame_counter {
             stdin.write_all(&transparent_frame).unwrap();
         } else {
-            let path = get_intermediate_path(&patch.dir, j_frame as usize + 1);
+            let Some(path) = patch.imgs.pop_front() else {
+                current_patch = None;
+                patch_index += 1;
+                debug!("Patching next {}", patch_index);
+                continue;
+            };
             if !try_exists(&path, TRY_MAX_TRIES, TRY_WAIT_DURATION) {
                 panic!("Patch frame {} does not exist", path.display());
             }
             let img = image::open(&path).unwrap().to_rgba8();
             let patch_frame = img.into_raw();
             stdin.write_all(&patch_frame).unwrap();
-            j_frame += 1;
-            if j_frame >= patch.len() {
-                current_patch = None;
-                patch_index += 1;
-                j_frame = 0;
-                debug!("Patching next {}", patch_index);
-            }
             // Delete the patched frame to save space
             std::thread::spawn(move || {
                 std::thread::sleep(TRY_WAIT_DURATION); // Give ffmpeg time to load the frame
@@ -77,50 +79,6 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<Patch>, para
             });
         }
         frame_counter += 1;
-    }
-}
-
-struct VideoParams {
-    framerate: f64,
-    width: u32,
-    height: u32,
-}
-
-fn get_video_params(file_path: impl AsRef<Path>) -> VideoParams {
-    let output = Command::new("ffprobe")
-        .args([
-            "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=width,height,r_frame_rate",
-            "-of", "default=noprint_wrappers=1:nokey=0",
-            file_path.as_ref().to_str().unwrap(),
-        ])
-        .output()
-        .expect("Failed to run ffprobe");
-
-    let stdout = str::from_utf8(&output.stdout).expect("Invalid UTF-8 output from ffprobe");
-
-    let mut width = None;
-    let mut height = None;
-    let mut framerate = None;
-
-    for line in stdout.lines() {
-        if let Some(val) = line.strip_prefix("width=") {
-            width = Some(val.parse().expect("Invalid width"));
-        } else if let Some(val) = line.strip_prefix("height=") {
-            height = Some(val.parse().expect("Invalid height"));
-        } else if let Some(val) = line.strip_prefix("r_frame_rate=") {
-            let mut parts = val.splitn(2, '/');
-            let num: f64 = parts.next().unwrap_or("0").parse().expect("Invalid numerator");
-            let den: f64 = parts.next().unwrap_or("1").parse().expect("Invalid denominator");
-            framerate = Some(if den != 0.0 { num / den } else { 0.0 });
-        }
-    }
-
-    VideoParams {
-        width: width.expect("Missing width"),
-        height: height.expect("Missing height"),
-        framerate: framerate.expect("Missing framerate"),
     }
 }
 
@@ -199,14 +157,6 @@ mod tests {
     use image_hasher::HashAlg;
     use super::*;
 
-    #[test]
-    fn test_get_video_params() {
-        let params = get_video_params("tests/test.mkv");
-        assert_eq!(params.width, 2560);
-        assert_eq!(params.height, 1440);
-        assert_eq!(params.framerate, 60.0);
-    }
-
     fn split_to_frames(path: impl AsRef<Path>, frame_dir: impl AsRef<Path>) {
         let path = path.as_ref();
         let frame_dir = frame_dir.as_ref();
@@ -261,15 +211,19 @@ mod tests {
 
     #[test]
     fn test_one_patch() {
+        let start_frame = 5;
+        let length = 4;
         // Patch
         let (sender, receiver) = mpsc::channel::<Patch>();
         let patch_dir = PathBuf::from("tests/one_patch");
         let temp_patch_dir = PathBuf::from("tmp/one_patch");
         shallow_copy_dir(&patch_dir, &temp_patch_dir);
         let patch = Patch {
-            start_frame: 5,
-            end_frame: 8,
-            dir: temp_patch_dir.clone(),
+            start_frame,
+            end_frame: start_frame + length - 1,
+            imgs: (1..=length)
+                .map(|i| get_intermediate_path(&temp_patch_dir, i as usize))
+                .collect(),
         };
         std::thread::spawn(move || {
             sender.send(patch)

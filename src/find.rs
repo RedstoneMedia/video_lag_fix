@@ -129,7 +129,7 @@ pub fn find_duplicates(args: &Args, rife: &mut Rife) {
     frames_backtrack.for_each(|vars, (frame, preprocessed_frame), iter_ctx| {
         let diff = match iter_ctx.last() {
             None => FrameDifference::INFINITY,
-            Some((_, previous)) => frame_compare::compare_frames(previous, &preprocessed_frame),
+            Some((_, previous)) => frame_compare::compare_frames(previous, preprocessed_frame),
         };
         if !diff.is_finite() {
             warn!("got non-finite diff: {:?}", diff);
@@ -195,14 +195,17 @@ pub fn find_duplicates(args: &Args, rife: &mut Rife) {
                 last_found_frame = chain.frames[0];
 
                 vars.chain_i += 1;
-                let patch_dir = format!("tmp/patch_{}", vars.chain_i);
-                fs::create_dir_all(&patch_dir).expect("Creating patch dir should not fail");
-                rife.generate_in_betweens(
-                    chain,
-                    &patch_dir,
-                );
                 vars.chain_motion = 0.0;
                 vars.recent_motion.commit(diff.motion_estimate);
+
+                if !args.find_only {
+                    let patch_dir = format!("tmp/patch_{}", vars.chain_i);
+                    fs::create_dir_all(&patch_dir).expect("Creating patch dir should not fail");
+                    rife.generate_in_betweens(
+                        chain,
+                        &patch_dir,
+                    );
+                }
 
                 state = FindState::FindDuplicate;
                 iter_ctx.clear();
