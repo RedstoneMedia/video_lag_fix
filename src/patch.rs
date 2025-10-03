@@ -251,9 +251,9 @@ mod tests {
             None,
             [
                 "-c:v", "h264",
-                "-crf", "19",
+                "-crf", "10",
                 "-preset", "slow",
-                "-pix_fmt", "yuv420p",
+                "-pix_fmt", "yuv444p",
                 "-an",
             ],
         );
