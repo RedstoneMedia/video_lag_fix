@@ -108,9 +108,14 @@ impl IterVars {
 }
 
 
-pub fn find_duplicates(args: &Args, rife: &mut Rife) {
+pub fn find_duplicates(
+    input_path: impl AsRef<Path>,
+    mut rife: Option<&mut Rife>,
+    args: &Args
+) {
+    let input_path = input_path.as_ref();
     let iter = FfmpegCommand::new()
-        .input(args.input_path.display().to_string())
+        .input(input_path.display().to_string())
         .rawvideo()
         .spawn().expect("Ffmpeg should spawn")
         .iter().expect("Should be able to get Ffmpeg event iterator");
@@ -198,7 +203,7 @@ pub fn find_duplicates(args: &Args, rife: &mut Rife) {
                 vars.chain_motion = 0.0;
                 vars.recent_motion.commit(diff.motion_estimate);
 
-                if !args.find_only {
+                if let Some(rife) = &mut rife {
                     let patch_dir = format!("tmp/patch_{}", vars.chain_i);
                     fs::create_dir_all(&patch_dir).expect("Creating patch dir should not fail");
                     rife.generate_in_betweens(

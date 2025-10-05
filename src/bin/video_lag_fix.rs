@@ -1,17 +1,14 @@
-mod patch;
-mod find;
-mod rife;
-mod utils;
-mod dev;
-
 use std::path::PathBuf;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use fern::Dispatch;
 use log::{error, info};
 use mimalloc::MiMalloc;
-use rife::Rife;
-use utils::{TRY_MAX_TRIES, TRY_WAIT_DURATION};
-use crate::patch::{Patch, PatchArgs};
+use video_lag_fix::rife::Rife;
+use video_lag_fix::{utils, Args};
+use video_lag_fix::patch;
+use video_lag_fix::find;
+use video_lag_fix::utils::{TRY_MAX_TRIES, TRY_WAIT_DURATION};
+use video_lag_fix::patch::{Patch, PatchArgs};
 
 pub const RIFE_PATH: &str = "rife-ncnn-vulkan";
 
@@ -22,7 +19,7 @@ static GLOBAL: MiMalloc = MiMalloc;
 /// Automatically finds and attempts to fix lags in video recordings with frame interpolation.
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
-struct Args {
+struct Cli {
     /// The input video file path
     #[arg(short)]
     input_path: PathBuf,
@@ -100,7 +97,28 @@ struct Args {
     verbose: bool,
 }
 
-fn setup_logging(args: &Args) {
+impl Cli {
+
+    fn as_args(&self) -> Args {
+        Args {
+            diff_mean_alpha: self.diff_mean_alpha,
+            mul_dup_threshold: self.mul_dup_threshold,
+            max_dup_threshold: self.max_dup_threshold,
+            min_duplicates: self.min_duplicates,
+            max_duplicates: self.max_duplicates,
+            recent_motion_mean_alpha: self.recent_motion_mean_alpha,
+            slow_motion_mean_alpha: self.slow_motion_mean_alpha,
+            motion_compensate_threshold: self.motion_compensate_threshold,
+            mul_motion_compensate_threshold_retry: self.mul_motion_compensate_threshold_retry,
+            motion_compensate_start: self.motion_compensate_start,
+            max_motion_mul: self.max_motion_mul,
+            diff_hash_resize: self.diff_hash_resize,
+        }
+    }
+
+}
+
+fn setup_logging(args: &Cli) {
     let filename = args.input_path.file_name().expect("Expected input file");
     let log_filename = format!("{}.log", filename.to_string_lossy());
     Dispatch::new()
@@ -121,46 +139,46 @@ fn main() {
 {usage-heading} {usage}
 
 {all-args}{after-help}";
-    let mut matches = Args::command().help_template(full_template).get_matches();
-    let args = Args::from_arg_matches_mut(&mut matches).unwrap();
-    if !args.input_path.exists() {
+    let mut matches = Cli::command().help_template(full_template).get_matches();
+    let cli_args = Cli::from_arg_matches_mut(&mut matches).unwrap();
+    if !cli_args.input_path.exists() {
         eprintln!("Error: Input file does not exist");
         std::process::exit(1);
     }
-    setup_logging(&args);
-    info!("Processing: \"{}\" to \"{}\"", args.input_path.display(), args.output_path.display());
+    setup_logging(&cli_args);
+    info!("Processing: \"{}\" to \"{}\"", cli_args.input_path.display(), cli_args.output_path.display());
 
     let start = std::time::Instant::now();
+    if !cli_args.find_only {
+        let (patch_sender, patch_receiver) = std::sync::mpsc::channel::<Patch>();
+        let mut rife= Rife::start(RIFE_PATH, &cli_args.rife_model_path, move |done_duplicate| {
+            // Sometimes RIFE still holds the files lock for some reason, even after reporting "done".
+            utils::try_delete(&done_duplicate.input0, TRY_MAX_TRIES, TRY_WAIT_DURATION)
+                .unwrap_or_else(|_| error!("Could not remove {}", done_duplicate.input0));
+            utils::try_delete(&done_duplicate.input1, TRY_MAX_TRIES, TRY_WAIT_DURATION)
+                .unwrap_or_else(|_| error!("Could not remove {}", done_duplicate.input0));
+            // Tell the patcher to insert this
+            patch_sender.send(done_duplicate.into()).unwrap();
+        });
 
-    let (patch_sender, patch_receiver) = std::sync::mpsc::channel::<Patch>();
-    let mut rife= Rife::start(RIFE_PATH, &args.rife_model_path, move |done_duplicate| {
-        // Sometimes RIFE still holds the files lock for some reason, even after reporting "done".
-        utils::try_delete(&done_duplicate.input0, TRY_MAX_TRIES, TRY_WAIT_DURATION)
-            .unwrap_or_else(|_| error!("Could not remove {}", done_duplicate.input0));
-        utils::try_delete(&done_duplicate.input1, TRY_MAX_TRIES, TRY_WAIT_DURATION)
-            .unwrap_or_else(|_| error!("Could not remove {}", done_duplicate.input0));
-        // Tell the patcher to insert this
-        patch_sender.send(done_duplicate.into()).unwrap();
-    });
-
-    if !args.find_only {
         let patch_args = PatchArgs::new(
-            args.render_hwaccel.clone(),
-            args.render_args.split(' ')
+            cli_args.render_hwaccel.clone(),
+            cli_args.render_args.split(' ')
         );
-        let input_path = args.input_path.clone();
-        let output_path = args.output_path.clone();
+        let input_path = cli_args.input_path.clone();
+        let output_path = cli_args.output_path.clone();
         let patch_thread = std::thread::spawn(move ||
             patch::patch_video(input_path, output_path, &patch_args, patch_receiver)
         );
         std::thread::sleep(std::time::Duration::from_millis(500));
 
-        find::find_duplicates(&args, &mut rife);
+        let args = cli_args.as_args();
+        find::find_duplicates(&cli_args.input_path, Some(&mut rife), &args);
         rife.complete();
         patch_thread.join().unwrap();
     } else {
-        find::find_duplicates(&args, &mut rife);
-        rife.complete();
+        let args = cli_args.as_args();
+        find::find_duplicates(&cli_args.input_path, None, &args);
     }
 
     info!("Finished in {:.2}s", start.elapsed().as_secs_f32());

@@ -1,5 +1,5 @@
 [package]
-name = "VideoLagFix"
+name = "video_lag_fix"
 authors = ["RedstoneMedia"]
 version = "0.1.1"
 edition = "2021"
