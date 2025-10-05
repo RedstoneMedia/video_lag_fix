@@ -85,10 +85,10 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<Patch>, para
                 debug!("Patching next {}", patch_index);
                 continue;
             };
-            if !try_exists(&path, TRY_MAX_TRIES, TRY_WAIT_DURATION) {
+            if !try_exists(path, TRY_MAX_TRIES, TRY_WAIT_DURATION) {
                 panic!("Patch frame {} does not exist", path.display());
             }
-            let img = image::open(&path).unwrap().to_rgba8();
+            let img = image::open(path).unwrap().to_rgba8();
             let patch_frame = img.into_raw();
             stdin.write_all(&patch_frame).unwrap();
             j_frame += 1;

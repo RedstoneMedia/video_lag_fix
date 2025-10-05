@@ -91,14 +91,17 @@ impl Rife {
     }
 
 
-    pub fn generate_in_betweens(&mut self, duplicate_chain: DuplicateChain, dir: impl AsRef<Path>) {
+    pub fn generate_in_betweens(&mut self, duplicate_chain: &DuplicateChain, dir: impl AsRef<Path>) {
         if let Ok(Some(exit_status)) = self.child.try_wait() {
             panic!("Cannot generate in betweens: RIFE exited with status {}", exit_status);
         }
+        let Some(frames_dir) = &duplicate_chain.frames_dir else {
+            panic!("Cannot generate in betweens: No frames");
+        };
         let dir = dir.as_ref();
 
-        let in_path = duplicate_chain.frames_dir.join("0.webp");
-        let next_path = duplicate_chain.frames_dir.join("1.webp"); // SHOULD NOT be generated -> Would cause a repeat
+        let in_path = frames_dir.join("0.webp");
+        let next_path = frames_dir.join("1.webp"); // SHOULD NOT be generated -> Would cause a repeat
 
         let n = duplicate_chain.frames.len() - 1;
         let mut duplicate_chain = Some(duplicate_chain);
@@ -111,7 +114,7 @@ impl Rife {
                 let mut open_jobs = self.open_jobs.lock().unwrap();
                 let key = format!("{}-{}-{}", in_path.display(), next_path.display(), p.display());
                 let duplicate_chain = duplicate_chain.take().expect("Can never fail, only taken once");
-                open_jobs.insert(key, (self.job_counter, duplicate_chain));
+                open_jobs.insert(key, (self.job_counter, duplicate_chain.clone()));
                 self.job_counter += 1;
             }
         }

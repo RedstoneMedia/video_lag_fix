@@ -2,13 +2,13 @@ use std::fmt::Display;
 use std::io::Write;
 use std::iter;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::str::FromStr;
 use std::sync::mpsc;
 use clap::Parser;
 use fern::Dispatch;
-use log::info;
+use ffmpeg_sidecar::command::FfmpegCommand;
+use image::RgbImage;
 use rand::Rng;
+use video_lag_fix::find::DECODE_ARGS;
 use video_lag_fix::patch::{patch_video, Patch, PatchArgs};
 use video_lag_fix::utils;
 
@@ -83,17 +83,6 @@ impl Display for Lag {
     }
 }
 
-impl FromStr for Lag {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (s, l) = s.split_once(',').ok_or("Expected comma-separated pair")?;
-        let start = s.parse::<usize>().map_err(|_| "Could not parse start")?;
-        let length = l.parse::<usize>().map_err(|_| "Could not parse length")?;
-        Ok(Self { start, length })
-    }
-}
-
 pub fn insert_lags(
     input: impl AsRef<Path>,
     output: impl AsRef<Path>,
@@ -132,7 +121,7 @@ pub fn insert_lags(
     let meta_path = output.with_extension("lags.csv");
     let mut meta_file = std::fs::File::create(meta_path).expect("Should create metadata file");
     for lag in &lags {
-        meta_file.write(format!("{}\n", lag).as_bytes()).expect("Should write to metadata file");
+        meta_file.write_all(format!("{}\n", lag).as_bytes()).expect("Should write to metadata file");
     }
     // Select frames to duplicate
     let select_dir = Path::new("tmp/selected");
@@ -151,29 +140,28 @@ pub fn insert_lags(
     patch_video(input, output, patch_args, receiver);
 }
 
-fn select_frames(path: impl AsRef<Path>, frames: impl IntoIterator<Item=usize>, select_dir: &Path) {
+fn select_frames(path: impl AsRef<Path>, target_frames: impl IntoIterator<Item=usize>, select_dir: impl AsRef<Path>) {
     let path = path.as_ref();
+    let select_dir = select_dir.as_ref();
     std::fs::create_dir_all(select_dir).expect("Should be able to create directory");
 
-    let select_vf = format!("select='{}'",
-                            frames.into_iter()
-                                .map(|n| format!("eq(n,{})", n))
-                                .collect::<Vec<_>>()
-                                .join("+")
-    );
-    let mut cmd = Command::new("ffmpeg");
-    cmd.arg("-hwaccel").arg("cuda");
-    cmd.arg("-y");
-    cmd.arg("-i").arg(path);
-    cmd.arg("-vf").arg(select_vf);
-    cmd.arg("-fps_mode").arg("vfr");
-    cmd.arg("-frame_pts").arg("1");
-    cmd.arg(format!("{}/%05d.png", select_dir.display()));
+    let mut command = FfmpegCommand::new();
+    command.input(path.display().to_string());
+    command.args(DECODE_ARGS);
+    command.print_command();
 
-    info!("Running: {:?}", cmd);
-    let mut ffmpeg = cmd.spawn().expect("ffmpeg should spawn");
-    let status = ffmpeg.wait().expect("Should wait for ffmpeg");
-    if !status.success() {
-        panic!("ffmpeg exited with {}", status);
+    let iter = command.spawn().expect("Ffmpeg should spawn")
+        .iter().expect("Should be able to get Ffmpeg event iterator");
+
+    let mut target_frames = target_frames.into_iter().peekable();
+    for frame in iter.filter_frames() {
+        println!("{}", frame.frame_num);
+        let Some(next_target) = target_frames.peek() else {break};
+        if *next_target == frame.frame_num as usize {
+            target_frames.next();
+            let img: RgbImage = image::ImageBuffer::from_vec(frame.width, frame.height, frame.data).unwrap();
+            let img_path = select_dir.join(format!("{:05}.png", frame.frame_num));
+            img.save(img_path).expect("Should save image");
+        }
     }
 }

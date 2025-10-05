@@ -45,11 +45,11 @@ impl Deref for ExponentialMovingAverage {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DuplicateChain {
     pub frames: Vec<u32>,
     pub timestamps: Vec<f32>,
-    pub frames_dir: PathBuf,
+    pub frames_dir: Option<PathBuf>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -107,16 +107,24 @@ impl IterVars {
 
 }
 
+const FRAMES_PATH : &str = "tmp/frames";
+
+pub const DECODE_ARGS: [&str; 7] = [
+    "-sws_flags", "spline+accurate_rnd+full_chroma_inp+full_chroma_int", // Important to get same(ish) colors
+    "-f", "rawvideo",
+    "-pix_fmt", "rgb24",
+    "-"
+];
 
 pub fn find_duplicates(
     input_path: impl AsRef<Path>,
     mut rife: Option<&mut Rife>,
     args: &Args
-) {
+) -> Vec<DuplicateChain> {
     let input_path = input_path.as_ref();
     let iter = FfmpegCommand::new()
         .input(input_path.display().to_string())
-        .rawvideo()
+        .args(DECODE_ARGS)
         .spawn().expect("Ffmpeg should spawn")
         .iter().expect("Should be able to get Ffmpeg event iterator");
 
@@ -126,6 +134,7 @@ pub fn find_duplicates(
     let vars = IterVars::from_args(args);
     let max_history = args.max_duplicates * 2 + 1; // Kind of makes sense if you want the full history while backtracking. +1 to detect too long
     let mut last_found_frame = 0u32;
+    let mut chains = Vec::new();
     let preprocessed_frames_iter = iter.filter_frames().map(|frame| {
         let preprocessed_frame = preprocess_frame(&frame, args);
         (frame, preprocessed_frame)
@@ -183,13 +192,14 @@ pub fn find_duplicates(
                 state = FindState::CompensateMotion { n_additional: n_additional + 1};
             },
             (CheckChainResult::Ok, _) => {
+                let frames_path = rife.is_some().then(|| Path::new(FRAMES_PATH));
                 let chain = create_new_chain(ProcessChainData {
                     vars,
                     iter_ctx,
                     state,
                     end_frame: frame,
                     diff,
-                });
+                }, frames_path);
                 let avg_diff = vars.avg_hash.unwrap_or(0.0);
                 info!(
                     "Duplicate chain {} found #{}-#{}, length: {}, diff_ema: {:0.4}, diff: {:0.4}, chain_motion: {:0.4}, state: {:?}, at {:.3}s",
@@ -207,10 +217,12 @@ pub fn find_duplicates(
                     let patch_dir = format!("tmp/patch_{}", vars.chain_i);
                     fs::create_dir_all(&patch_dir).expect("Creating patch dir should not fail");
                     rife.generate_in_betweens(
-                        chain,
+                        &chain,
                         &patch_dir,
                     );
+                    chains.push(chain);
                 }
+                chains.push(chain);
 
                 state = FindState::FindDuplicate;
                 iter_ctx.clear();
@@ -226,6 +238,7 @@ pub fn find_duplicates(
     });
 
     info!("Finding Duplicates Took: {}s", s.elapsed().as_secs_f32());
+    chains
 }
 
 
@@ -292,21 +305,27 @@ fn check_chain(data: ProcessChainData, args: &Args) -> CheckChainResult {
     CheckChainResult::Ok
 }
 
-fn create_new_chain(data: ProcessChainData) -> DuplicateChain {
+fn create_new_chain(data: ProcessChainData, frames_path: Option<impl AsRef<Path>>) -> DuplicateChain {
     let vars = data.vars;
     let iter_ctx = data.iter_ctx;
 
     // Construct Duplicate Chain
     let frames: Vec<_> = iter_ctx.iter().map(|(f, _)| f.frame_num).collect();
     let timestamps: Vec<_> = iter_ctx.iter().map(|(f, _)| f.timestamp).collect();
-
     let mut chain = iter_ctx.clear_and_drain(); // clear history side effect to avoid cloning large frames
+
+    let Some(frames_path) = frames_path else {
+        return DuplicateChain {
+            frames,
+            timestamps,
+            frames_dir: None
+        }
+    };
+    let dir = frames_path.as_ref().join(vars.chain_i.to_string());
+    fs::create_dir_all(&dir).expect("Creating frames directory should not fail");
+
     let start_image = frame_to_image(chain.pop_front().expect("Chain should have frame").0);
     let end_image = frame_to_image(data.end_frame.clone());
-
-    let frames_path = Path::new("tmp/frames");
-    let dir = frames_path.join(vars.chain_i.to_string());
-    fs::create_dir_all(&dir).expect("Creating frames directory should not fail");
 
     let start_frame_path = dir.join("0.webp").to_string_lossy().to_string();
     let end_frame_path = dir.join("1.webp").to_string_lossy().to_string();
@@ -316,6 +335,6 @@ fn create_new_chain(data: ProcessChainData) -> DuplicateChain {
     DuplicateChain {
         frames,
         timestamps,
-        frames_dir: dir
+        frames_dir: Some(dir)
     }
 }
