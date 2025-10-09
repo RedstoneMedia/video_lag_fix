@@ -37,7 +37,7 @@ impl From<DoneDuplicate> for Patch {
         let len = end - start;
         let dir = Path::new(&value.last_output).parent()
             .expect("Should have parent directory");
-        let imgs = (0..len)
+        let imgs = (1..=len)
             .map(|i| get_intermediate_path(dir, i as usize))
             .collect();
         Self {
