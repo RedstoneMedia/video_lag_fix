@@ -34,7 +34,7 @@ impl From<DoneDuplicate> for Patch {
     fn from(value: DoneDuplicate) -> Self {
         let start = value.chain.frames[1]; // 1 because 0 is not a duplicate
         let end = *value.chain.frames.last().unwrap();
-        let len = end - start;
+        let len = end - start + 1;
         let dir = Path::new(&value.last_output).parent()
             .expect("Should have parent directory");
         let imgs = (1..=len)

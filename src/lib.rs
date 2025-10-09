@@ -45,7 +45,7 @@ pub struct Args {
     pub diff_hash_resize: u32,
 }
 
-pub const VIDEO_SWS_FLAGS: &str = "full_chroma_inp+full_chroma_int";
+pub const VIDEO_SWS_FLAGS: &str = "accurate_rnd+full_chroma_inp+full_chroma_int";
 
 pub const VIDEO_DECODE_ARGS: [&str; 7] = [
     "-sws_flags", VIDEO_SWS_FLAGS, // Important to get same(ish) colors
