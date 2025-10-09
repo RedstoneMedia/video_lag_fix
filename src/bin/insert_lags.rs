@@ -7,10 +7,9 @@ use clap::Parser;
 use fern::Dispatch;
 use ffmpeg_sidecar::command::FfmpegCommand;
 use image::RgbImage;
-use rand::Rng;
-use video_lag_fix::find::DECODE_ARGS;
+use rand::{Rng, SeedableRng};
 use video_lag_fix::patch::{patch_video, Patch, PatchArgs};
-use video_lag_fix::utils;
+use video_lag_fix::{utils, VIDEO_DECODE_ARGS};
 
 /// Automatically inserts lags for validation.
 #[derive(Parser, Debug, Clone)]
@@ -29,6 +28,9 @@ struct Cli {
     /// The maximum number of frames for a lag to last
     #[arg(short, default_value_t = 8)]
     max_length: usize,
+    /// The random seed
+    #[arg(short)]
+    seed: Option<u64>,
 
     /// The method of hardware acceleration for ffmpeg to use
     #[arg(long, default_value = "cuda")]
@@ -66,6 +68,7 @@ fn main() {
         cli_args.output_path,
         cli_args.n_inserts,
         cli_args.max_length,
+        cli_args.seed,
         &patch_args
     );
 }
@@ -88,6 +91,7 @@ pub fn insert_lags(
     output: impl AsRef<Path>,
     n_inserts: usize,
     max_length: usize,
+    seed: Option<u64>,
     patch_args: &PatchArgs,
 ) {
     let input = input.as_ref();
@@ -96,8 +100,13 @@ pub fn insert_lags(
     let video_params = utils::get_video_params(input);
     let n_frames = (video_params.framerate * video_params.duration.as_secs_f64()).floor() as usize;
 
+    let mut rng = if let Some(seed) = seed {
+        rand::rngs::StdRng::seed_from_u64(seed)
+    } else {
+        rand::rngs::StdRng::from_os_rng()
+    };
+
     // Select insert locations
-    let mut rng = rand::rng();
     let mut lags = Vec::with_capacity(n_inserts);
     'outer: while lags.len() < n_inserts {
         let new_start = rng.random_range(1..(n_frames - max_length));
@@ -125,7 +134,7 @@ pub fn insert_lags(
     }
     // Select frames to duplicate
     let select_dir = Path::new("tmp/selected");
-    select_frames(input, lags.iter().map(|Lag {start, ..}| *start - 1), select_dir);
+    //select_frames(input, lags.iter().map(|Lag {start, ..}| *start - 1), select_dir);
     // Patch
     let (sender, receiver) = mpsc::channel::<Patch>();
     std::thread::spawn(move || {
@@ -147,7 +156,7 @@ fn select_frames(path: impl AsRef<Path>, target_frames: impl IntoIterator<Item=u
 
     let mut command = FfmpegCommand::new();
     command.input(path.display().to_string());
-    command.args(DECODE_ARGS);
+    command.args(VIDEO_DECODE_ARGS);
     command.print_command();
 
     let iter = command.spawn().expect("Ffmpeg should spawn")
@@ -155,7 +164,6 @@ fn select_frames(path: impl AsRef<Path>, target_frames: impl IntoIterator<Item=u
 
     let mut target_frames = target_frames.into_iter().peekable();
     for frame in iter.filter_frames() {
-        println!("{}", frame.frame_num);
         let Some(next_target) = target_frames.peek() else {break};
         if *next_target == frame.frame_num as usize {
             target_frames.next();

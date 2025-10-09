@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use log::{debug, info};
 use crate::rife::{get_intermediate_path, DoneDuplicate};
 use crate::utils::{get_video_params, try_delete, try_exists, VideoParams, TRY_MAX_TRIES, TRY_WAIT_DURATION};
+use crate::VIDEO_SWS_FLAGS;
 
 /// A sequential patch to a video.
 #[derive(Debug, Clone)]
@@ -61,7 +62,7 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<Patch>, para
             std::thread::sleep(TRY_WAIT_DURATION); // Give ffmpeg time to load the frame
             for img in imgs {
                 if !img.exists() { continue; }
-                try_delete(img, TRY_MAX_TRIES, TRY_WAIT_DURATION).unwrap();
+                //try_delete(img, TRY_MAX_TRIES, TRY_WAIT_DURATION).unwrap();
             }
         });
     }
@@ -78,7 +79,7 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<Patch>, para
             stdin.write_all(&transparent_frame).unwrap();
         } else {
             let Some(path) = patch.imgs.get(j_frame as usize) else {
-                cleanup(current_patch.as_ref());
+                //cleanup(current_patch.as_ref());
                 current_patch = None;
                 patch_index += 1;
                 j_frame = 0;
@@ -154,9 +155,13 @@ pub fn patch_video(
     cmd.arg("-pixel_format").arg("rgba");
     cmd.arg("-video_size").arg(format!("{}x{}", params.width, params.height));
     cmd.arg("-i").arg("-");
-    cmd.arg("-filter_complex").arg("[0:v][1:v]overlay=0:0:eof_action=pass:format=auto");
+    // Convert background to rgb24 first to avoid flickering, so that it matches the same colors as the overlay. sws_flags needs to match the flags used for decoding the overlays (Especially full_chroma_int).
+    cmd.arg("-filter_complex")
+        .arg(format!("sws_flags={};[0:v]format=rgb24[bg];[bg][1:v]overlay=0:0:eof_action=pass:format=auto[out];", VIDEO_SWS_FLAGS));
+
     cmd.args(&patch_args.output_args);
     cmd.arg("-fps_mode").arg("passthrough");
+    cmd.arg("-map").arg("[out]");
     cmd.arg(output_path.display().to_string());
     debug!("Running: {:?}", cmd);
 

@@ -6,7 +6,7 @@ use ffmpeg_sidecar::command::FfmpegCommand;
 use std::fs;
 use std::ops::Deref;
 use log::{debug, info, warn};
-use crate::Args;
+use crate::{Args, VIDEO_DECODE_ARGS};
 use crate::rife::Rife;
 use frame_compare::FrameDifference;
 use crate::find::backtrackable::{BacktrackCtx, Backtrackable};
@@ -109,22 +109,15 @@ impl IterVars {
 
 const FRAMES_PATH : &str = "tmp/frames";
 
-pub const DECODE_ARGS: [&str; 7] = [
-    "-sws_flags", "spline+accurate_rnd+full_chroma_inp+full_chroma_int", // Important to get same(ish) colors
-    "-f", "rawvideo",
-    "-pix_fmt", "rgb24",
-    "-"
-];
-
 pub fn find_duplicates(
     input_path: impl AsRef<Path>,
     mut rife: Option<&mut Rife>,
     args: &Args
-) -> Vec<DuplicateChain> {
+) -> Vec<u32> {
     let input_path = input_path.as_ref();
     let iter = FfmpegCommand::new()
         .input(input_path.display().to_string())
-        .args(DECODE_ARGS)
+        .args(VIDEO_DECODE_ARGS)
         .spawn().expect("Ffmpeg should spawn")
         .iter().expect("Should be able to get Ffmpeg event iterator");
 
@@ -163,6 +156,7 @@ pub fn find_duplicates(
         match (check_result, state) {
             (CheckChainResult::FailDuplicate, _) => {
                 debug!("Found duplicate at #{}", frame.frame_num);
+                chains.push(frame.frame_num);
             }, // skip
             // Lost cause, move on
             (CheckChainResult::FailShort | CheckChainResult::FailLong | CheckChainResult::FailTooMuchMotion, FindState::FindDuplicate | FindState::FailedCompensate)
@@ -220,9 +214,7 @@ pub fn find_duplicates(
                         &chain,
                         &patch_dir,
                     );
-                    chains.push(chain);
                 }
-                chains.push(chain);
 
                 state = FindState::FindDuplicate;
                 iter_ctx.clear();
