@@ -134,7 +134,7 @@ pub fn insert_lags(
     }
     // Select frames to duplicate
     let select_dir = Path::new("tmp/selected");
-    //select_frames(input, lags.iter().map(|Lag {start, ..}| *start - 1), select_dir);
+    select_frames(input, lags.iter().map(|Lag {start, ..}| *start - 1), select_dir);
     // Patch
     let (sender, receiver) = mpsc::channel::<Patch>();
     std::thread::spawn(move || {

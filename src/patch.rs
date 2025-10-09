@@ -62,7 +62,7 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<Patch>, para
             std::thread::sleep(TRY_WAIT_DURATION); // Give ffmpeg time to load the frame
             for img in imgs {
                 if !img.exists() { continue; }
-                //try_delete(img, TRY_MAX_TRIES, TRY_WAIT_DURATION).unwrap();
+                try_delete(img, TRY_MAX_TRIES, TRY_WAIT_DURATION).unwrap();
             }
         });
     }
@@ -79,7 +79,7 @@ fn send_frames(stdin: &mut ChildStdin, duplicate_receiver: Receiver<Patch>, para
             stdin.write_all(&transparent_frame).unwrap();
         } else {
             let Some(path) = patch.imgs.get(j_frame as usize) else {
-                //cleanup(current_patch.as_ref());
+                cleanup(current_patch.as_ref());
                 current_patch = None;
                 patch_index += 1;
                 j_frame = 0;
