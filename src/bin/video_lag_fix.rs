@@ -141,7 +141,7 @@ fn main() {
 {all-args}{after-help}";
     let mut matches = Cli::command().help_template(full_template).get_matches();
     let cli_args = Cli::from_arg_matches_mut(&mut matches).unwrap();
-    if !cli_args.input_path.exists() {
+    if !cli_args.input_path.is_file() {
         eprintln!("Error: Input file does not exist");
         std::process::exit(1);
     }

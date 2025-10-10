@@ -59,6 +59,11 @@ fn main() {
     let cli_args = Cli::parse();
     setup_logging(&cli_args);
 
+    if !cli_args.input_path.is_file() {
+        eprintln!("Error: Input file does not exist");
+        std::process::exit(1);
+    }
+
     let patch_args = PatchArgs::new(
         cli_args.render_hwaccel,
         cli_args.render_args.split(' ')

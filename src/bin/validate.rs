@@ -106,6 +106,11 @@ fn main() {
     let cli_args = Cli::parse();
     setup_logging(&cli_args);
 
+    if !cli_args.input_path.is_file() {
+        eprintln!("Error: Input file does not exist");
+        std::process::exit(1);
+    }
+
     let metadata_path = cli_args.input_path.with_extension("lags.csv");
     let metadata_file = BufReader::new(
         File::open(metadata_path).expect("Should open metadata file")
