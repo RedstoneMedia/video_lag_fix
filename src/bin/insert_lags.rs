@@ -36,7 +36,7 @@ struct Cli {
     #[arg(long, default_value = "cuda")]
     render_hwaccel: Option<String>,
     /// Space seperated output args passed to ffmpeg
-    #[arg(short, long, default_value = "-c:v av1_nvenc -preset p5 -rc vbr -cq 36 -rc-lookahead 48 -spatial-aq 1 -aq-strength 10 -multipass 2 -pix_fmt yuv420p -map 0:a -c:a libopus -b:a 48k")]
+    #[arg(short, long, allow_hyphen_values = true, default_value = "-c:v av1_nvenc -preset p5 -rc vbr -cq 36 -rc-lookahead 48 -spatial-aq 1 -aq-strength 10 -multipass 2 -pix_fmt yuv420p -map 0:a -c:a libopus -b:a 48k")]
     render_args: String,
 
     /// Werther to enable debug logging
