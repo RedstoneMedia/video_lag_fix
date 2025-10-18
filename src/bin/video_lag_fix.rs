@@ -61,7 +61,7 @@ struct Cli {
     mul_motion_compensate_threshold_retry: f32,
     /// How many duplicate frames are needed for the motion compensation to be active
     /// Range: 1..
-    #[arg(long, default_value_t = 1, verbatim_doc_comment)]
+    #[arg(long, default_value_t = 2, verbatim_doc_comment)]
     motion_compensate_start: usize,
     /// Maximum multiple of the background average motion allowed to still interpolate
     /// Allows for more interpolation in low motion areas while thwarting troubling high motion areas to be interpolated too much
