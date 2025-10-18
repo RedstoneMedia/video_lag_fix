@@ -33,7 +33,7 @@ struct Cli {
 
     /// Minium confidence to consider two frames duplicates.
     /// Range: 0.0..1.0 (lower = more detected duplicates, higher = less detected duplicates)
-    #[arg(long, default_value_t = 0.55, verbatim_doc_comment)]
+    #[arg(long, default_value_t = 0.65, verbatim_doc_comment)]
     pub min_duplicate_confidence: f32,
     /// Minimum number of consecutive duplicate frames required to trigger interpolation
     /// Range: 1..
@@ -76,7 +76,7 @@ struct Cli {
     /// Minimum allowed hash difference to definitely consider two frames distinct.
     /// This skips calculating the more costly distinctness model.
     /// Range: 0.0..1.0 (1.0 = completely different frame, 0.0 = hash identical)
-    #[arg(long, default_value_t = 0.015, verbatim_doc_comment)]
+    #[arg(long, default_value_t = 0.018, verbatim_doc_comment)]
     min_hash_diff: f32,
 
     /// The method of hardware acceleration for ffmpeg to use

@@ -65,7 +65,7 @@ struct Cli {
     /// Minimum allowed hash difference to definitely consider two frames distinct.
     /// This skips calculating the more costly distinctness model.
     /// Range: 0.0..1.0 (1.0 = completely different frame, 0.0 = hash identical)
-    #[arg(long, default_value_t = 0.015, verbatim_doc_comment)]
+    #[arg(long, default_value_t = 0.018, verbatim_doc_comment)]
     min_hash_diff: f32,
 
     /// Werther to enable debug logging
