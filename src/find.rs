@@ -12,9 +12,9 @@ use frame_compare::FrameDifference;
 use crate::find::backtrackable::{BacktrackCtx, Backtrackable};
 use crate::find::frame_compare::{preprocess_frame, PreprocessedFrame};
 
-mod tiny_motion_net;
-mod frame_compare;
-mod backtrackable;
+pub mod frame_compare;
+pub mod backtrackable;
+pub mod models;
 
 #[derive(Debug, Clone, Copy)]
 struct ExponentialMovingAverage {
@@ -81,7 +81,6 @@ struct IterVars {
     chain_i: usize,
     chain_motion: f32,
     last_diff: f32,
-    avg_hash: ExponentialMovingAverage,
     recent_motion: ExponentialMovingAverage,
     slow_avg_motion: ExponentialMovingAverage,
 }
@@ -99,7 +98,6 @@ impl IterVars {
             chain_i: 0,
             chain_motion: 0.0,
             last_diff: 0.0,
-            avg_hash: ExponentialMovingAverage::new(args.diff_mean_alpha),
             recent_motion: ExponentialMovingAverage::new(args.recent_motion_mean_alpha),
             slow_avg_motion: ExponentialMovingAverage::new(args.slow_motion_mean_alpha),
         }
@@ -136,7 +134,7 @@ pub fn find_duplicates(
     frames_backtrack.for_each(|vars, (frame, preprocessed_frame), iter_ctx| {
         let diff = match iter_ctx.last() {
             None => FrameDifference::INFINITY,
-            Some((_, previous)) => frame_compare::compare_frames(previous, preprocessed_frame),
+            Some((_, previous)) => frame_compare::compare_frames(previous, preprocessed_frame, args),
         };
         if !diff.is_finite() {
             warn!("got non-finite diff: {:?}", diff);
@@ -194,10 +192,9 @@ pub fn find_duplicates(
                     end_frame: frame,
                     diff,
                 }, frames_path);
-                let avg_diff = vars.avg_hash.unwrap_or(0.0);
                 info!(
-                    "Duplicate chain {} found #{}-#{}, length: {}, diff_ema: {:0.4}, diff: {:0.4}, chain_motion: {:0.4}, state: {:?}, at {:.3}s",
-                    vars.chain_i, chain.frames[0], chain.frames.last().unwrap(), chain.frames.len(), avg_diff, vars.last_diff, vars.chain_motion, state, chain.timestamps[0]
+                    "Duplicate chain {} found #{}-#{}, length: {}, diff: {:0.4}, end_conf: {:0.4}, chain_motion: {:0.4}, state: {:?} at {:.3}s",
+                    vars.chain_i, chain.frames[0], chain.frames.last().unwrap(), chain.frames.len(), vars.last_diff, diff.distinct_confidence, vars.chain_motion, state, chain.timestamps[0]
                 );
 
                 assert!(last_found_frame < chain.frames[0], "Sequential sanity check {} < {}", last_found_frame, chain.frames[0]);
@@ -222,7 +219,6 @@ pub fn find_duplicates(
         }
 
         if check_result != CheckChainResult::FailDuplicate {
-            vars.avg_hash.commit(diff.hash_distance);
             vars.slow_avg_motion.commit(diff.motion_estimate);
         }
 
@@ -265,9 +261,8 @@ fn check_chain(data: ProcessChainData, args: &Args) -> CheckChainResult {
         return CheckChainResult::FailLong;
     }
     // Check for duplicate frame
-    let avg_diff = vars.avg_hash.unwrap_or(0.0);
-    let threshold = (avg_diff * args.mul_dup_threshold).min(args.max_dup_threshold);
-    if diff.hash_distance < threshold {
+    let duplicate_confidence = 1.0 - diff.distinct_confidence;
+    if duplicate_confidence >= args.min_duplicate_confidence {
         return CheckChainResult::FailDuplicate;
     }
     // Check short after duplicate (Otherwise chains can't start at all)

@@ -5,15 +5,9 @@ pub mod utils;
 
 
 pub struct Args {
-    /// Alpha value for exponential moving average used in difference mean calculation
-    /// Range: 0.0..1.0 (lower = smoother, but slower to adapt)
-    pub diff_mean_alpha: f32,
-    /// Multiplier applied to the average frame difference to calculate the duplicate detection threshold
-    /// Range: 0.0..1.0 (lower = less sensitive, more deviation from noise floor required)
-    pub mul_dup_threshold: f32,
-    /// Maximum allowed absolute difference between frames to be considered duplicates
-    /// Range: 0.0..1.0 (1.0 = completely different frame, 0.0 = hash identical)
-    pub max_dup_threshold: f32,
+    /// Minium confidence to consider two frames distinct
+    /// Range: 0.0..1.0 (1.0 = max confidence, 0.0 = no confidence)
+    pub min_duplicate_confidence: f32,
     /// Minimum number of consecutive duplicate frames required to trigger interpolation
     /// Range: 1..
     pub min_duplicates: usize,
@@ -43,6 +37,10 @@ pub struct Args {
     /// Factor by which input frames are downscaled for perceptual hashing
     /// Range: 1.. (lower = higher hash resolution, more sensitive to small differences)
     pub diff_hash_resize: u32,
+    /// Minimum allowed hash difference to definitely consider two frames distinct.
+    /// This skips calculating the more costly distinctness model.
+    /// Range: 0.0..1.0 (1.0 = completely different frame, 0.0 = hash identical)
+    pub min_hash_diff: f32,
 }
 
 pub const VIDEO_SWS_FLAGS: &str = "accurate_rnd+full_chroma_inp+full_chroma_int";

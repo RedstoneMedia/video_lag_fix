@@ -31,18 +31,10 @@ struct Cli {
     #[arg(short = 'm', default_value = "../models/rife-v4.26-large")]
     rife_model_path: PathBuf,
 
-    /// Alpha value for exponential moving average used in difference mean calculation
-    /// Range: 0.0..1.0 (lower = smoother, but slower to adapt)
-    #[arg(long, default_value_t = 0.16, verbatim_doc_comment)]
-    diff_mean_alpha: f32,
-    /// Multiplier applied to the average frame difference to calculate the duplicate detection threshold
-    /// Range: 0.0..1.0 (lower = less sensitive, more deviation from noise floor required)
-    #[arg(long, default_value_t = 0.165, verbatim_doc_comment)]
-    mul_dup_threshold: f32,
-    /// Maximum allowed absolute difference between frames to be considered duplicates
-    /// Range: 0.0..1.0 (1.0 = completely different frame, 0.0 = hash identical)
-    #[arg(long, default_value_t = 0.08, verbatim_doc_comment)]
-    max_dup_threshold: f32,
+    /// Minium confidence to consider two frames duplicates.
+    /// Range: 0.0..1.0 (lower = more detected duplicates, higher = less detected duplicates)
+    #[arg(long, default_value_t = 0.55, verbatim_doc_comment)]
+    pub min_duplicate_confidence: f32,
     /// Minimum number of consecutive duplicate frames required to trigger interpolation
     /// Range: 1..
     #[arg(long, default_value_t = 2, verbatim_doc_comment)]
@@ -81,6 +73,11 @@ struct Cli {
     /// Range: 1.. (lower = higher hash resolution, more sensitive to small differences)
     #[arg(long, default_value_t = 70, verbatim_doc_comment)]
     diff_hash_resize: u32,
+    /// Minimum allowed hash difference to definitely consider two frames distinct.
+    /// This skips calculating the more costly distinctness model.
+    /// Range: 0.0..1.0 (1.0 = completely different frame, 0.0 = hash identical)
+    #[arg(long, default_value_t = 0.015, verbatim_doc_comment)]
+    min_hash_diff: f32,
 
     /// The method of hardware acceleration for ffmpeg to use
     #[arg(long, default_value = "cuda")]
@@ -101,9 +98,7 @@ impl Cli {
 
     fn as_args(&self) -> Args {
         Args {
-            diff_mean_alpha: self.diff_mean_alpha,
-            mul_dup_threshold: self.mul_dup_threshold,
-            max_dup_threshold: self.max_dup_threshold,
+            min_duplicate_confidence: self.min_duplicate_confidence,
             min_duplicates: self.min_duplicates,
             max_duplicates: self.max_duplicates,
             recent_motion_mean_alpha: self.recent_motion_mean_alpha,
@@ -113,6 +108,7 @@ impl Cli {
             motion_compensate_start: self.motion_compensate_start,
             max_motion_mul: self.max_motion_mul,
             diff_hash_resize: self.diff_hash_resize,
+            min_hash_diff: self.min_hash_diff,
         }
     }
 
