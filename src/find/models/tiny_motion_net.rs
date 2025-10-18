@@ -36,12 +36,15 @@ mod tests {
 
     #[test]
     fn test_onnx() {
-        let mut model = create_model_session("../../../MotionPredictor/models/v8.onnx", 2);
+        let mut model = create_model_session(MODEL_PATH, 2);
 
         let t = std::time::Instant::now();
         let n = 1000;
         for _ in 0..n {
-            let image = Tensor::from_array(([1, 1, 180, 320], vec![0.0f32; 1*180*320])).unwrap();
+            let image = Tensor::from_array(
+                ([1, 1, INPUT_SIZE.1, INPUT_SIZE.0],
+                 vec![0.0f32; 1 * INPUT_SIZE.1 * INPUT_SIZE.0])
+            ).unwrap();
             let preds = model.run(inputs!["input" => image]).unwrap();
             let (_, _): (_, &[f32]) = preds.get("output").unwrap().try_extract_tensor().unwrap();
         }
