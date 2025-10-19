@@ -8,11 +8,12 @@ jobs:
   build-package:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         avx2: [true]
     permissions:
-      contents: read
+      contents: write
       packages: write
 
     steps:
@@ -66,19 +67,34 @@ jobs:
         run: |
           set -e
           PKG=package-${{ matrix.os }}-${{ matrix.avx2 }}
-          rm -rf $PKG
-          mkdir -p $PKG/bin
-          cp target/release/* $PKG/bin/ || true
-          cp LICENSE README.md log_viewer.py $PKG/ || true
-          mkdir -p $PKG/DuplicateDetect/models
-          cp DuplicateDetect/models/* $PKG/DuplicateDetect/models/ || true
-          mkdir -p $PKG/MotionPredictor/models
-          cp MotionPredictor/models/* $PKG/MotionPredictor/models/ || true
-          mkdir -p $PKG/rife-ncnn-vulkan
-          cp -r rife-ncnn-vulkan/build $PKG/rife-ncnn-vulkan/ || true
-          cp -r rife-ncnn-vulkan/models $PKG/rife-ncnn-vulkan/ || true
-          cp -r rife-ncnn-vulkan/LICENSE rife-ncnn-vulkan/README.md $PKG/rife-ncnn-vulkan/ || true
-          zip -r ${PKG}.zip $PKG
+          rm -rf "$PKG"
+          mkdir -p "$PKG/bin"
+          # Copy top-level release executables only. Avoid deps, rlib, dSYM, *.d files
+          for f in target/release/*; do
+            if [ -f "$f" ] && [ -x "$f" ]; then
+              base=$(basename "$f")
+              case "$base" in
+                *.d|*.rlib|*.rmeta|*.dSYM|*.dwo) continue ;;
+                deps) continue ;;
+                *) cp -v "$f" "$PKG/bin/" ;;
+              esac
+            fi
+          done
+          # Include project files
+          cp -v LICENSE README.md log_viewer.py "$PKG/" || true
+          mkdir -p "$PKG/DuplicateDetect/models"
+          cp -v DuplicateDetect/models/* "$PKG/DuplicateDetect/models/" || true
+          mkdir -p "$PKG/MotionPredictor/models"
+          cp -v MotionPredictor/models/* "$PKG/MotionPredictor/models/" || true
+          # Copy only the built rife-ncnn-vulkan executable(s) and shared libs
+          mkdir -p "$PKG/rife-ncnn-vulkan/bin"
+          find rife-ncnn-vulkan/build -maxdepth 3 -type f \( -perm /111 -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -print0 \
+            | xargs -0 -I{} cp -v {} "$PKG/rife-ncnn-vulkan/bin/" || true
+          # Copy models and docs for rife-ncnn-vulkan
+          cp -rv rife-ncnn-vulkan/models "$PKG/rife-ncnn-vulkan/" || true
+          cp -v rife-ncnn-vulkan/LICENSE rife-ncnn-vulkan/README.md "$PKG/rife-ncnn-vulkan/" || true
+          zip -r "${PKG}.zip" "$PKG"
+      
 
       - name: Prepare package layout and copy files (Windows)
         if: runner.os == 'Windows'
@@ -87,14 +103,21 @@ jobs:
           $pkg = "package-${{ matrix.os }}-${{ matrix.avx2 }}"
           Remove-Item -Recurse -Force $pkg -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path "$pkg\bin" | Out-Null
-          Copy-Item -Force -ErrorAction SilentlyContinue target\release\* "$pkg\bin\" 
+          # Copy only top-level .exe files from target\release (no deps, no .pdb, no .d files)
+          Get-ChildItem -Path target\release -File | Where-Object {
+            $_.Extension -eq '.exe' -and $_.Name -notlike '*.pdb' -and $_.Name -notlike '*-*' 
+          } | ForEach-Object { Copy-Item -Path $_.FullName -Destination "$pkg\bin\" -Force }
+          # Copy project files
           Copy-Item -Force LICENSE, README.md, log_viewer.py -Destination $pkg -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path "$pkg\DuplicateDetect\models" -Force | Out-Null
           Copy-Item -Force -ErrorAction SilentlyContinue DuplicateDetect\models\* "$pkg\DuplicateDetect\models\"
           New-Item -ItemType Directory -Path "$pkg\MotionPredictor\models" -Force | Out-Null
           Copy-Item -Force -ErrorAction SilentlyContinue MotionPredictor\models\* "$pkg\MotionPredictor\models\"
-          New-Item -ItemType Directory -Path "$pkg\rife-ncnn-vulkan" -Force | Out-Null
-          Copy-Item -Recurse -Force -ErrorAction SilentlyContinue rife-ncnn-vulkan\build "$pkg\rife-ncnn-vulkan\"
+          # Copy only rife-ncnn-vulkan executables and dlls
+          New-Item -ItemType Directory -Path "$pkg\rife-ncnn-vulkan\bin" -Force | Out-Null
+          Get-ChildItem -Path rife-ncnn-vulkan\build -Recurse -Include *.exe,*.dll -File | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination "$pkg\rife-ncnn-vulkan\bin\" -Force
+          }
           Copy-Item -Recurse -Force -ErrorAction SilentlyContinue rife-ncnn-vulkan\models "$pkg\rife-ncnn-vulkan\"
           Copy-Item -Force -ErrorAction SilentlyContinue rife-ncnn-vulkan\LICENSE, rife-ncnn-vulkan\README.md "$pkg\rife-ncnn-vulkan\"
           Compress-Archive -Path $pkg -DestinationPath "${pkg}.zip" -Force
