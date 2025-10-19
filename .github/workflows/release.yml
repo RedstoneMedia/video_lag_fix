@@ -40,14 +40,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: VulkanSDK
-          key: VulkanSDK-1.3.268.0-Installer
+          key: VulkanSDK-1.4.309.0-Installer
 
       - name: Windows install VulkanSDK
         if: runner.os == 'Windows' && steps.cache-vulkansdk.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/1.4.328.1/windows/vulkansdk-windows-X64-1.4.328.1.exe?Human=true" -OutFile vulkansdk-windows-X64-1.4.328.1.exe
-          7z x -aoa ./vulkansdk-windows-X64-1.4.328.1.exe -oVulkanSDK
+          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/1.4.309.0/windows/VulkanSDK-1.4.309.0-Installer.exe?Human=true" -OutFile VulkanSDK-1.4.309.0-Installer.exe
+          7z x -aoa ./VulkanSDK-1.4.309.0-Installer.exe -oVulkanSDK
 
       - name: Set up Rust
         uses: actions-rs/toolchain@v1
