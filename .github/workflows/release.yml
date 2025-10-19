@@ -3,11 +3,6 @@ name: Build and package on release
 on:
   release:
     types: [created]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag name to use'
-        required: true
 
 jobs:
   build-package:
@@ -23,18 +18,6 @@ jobs:
       packages: write
 
     steps:
-      - name: Get or create release and export upload_url
-        id: get_release
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const tag = core.getInput('tag');
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const rel = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
-            core.setOutput('upload_url', rel.data.upload_url);
-            core.setOutput('release_id', rel.data.id);
-
       - name: Checkout repository with submodules
         uses: actions/checkout@v4
         with:
