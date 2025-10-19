@@ -1,0 +1,108 @@
+name: Build and package on release
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build-package:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        avx2: [true]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake zip libvulkan-dev
+
+      - name: Install Windows build deps
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install -y cmake
+          choco install -y vulkan-sdk || Write-Host "choco vulkan-sdk install may fail on hosted image; ensure Vulkan SDK available"
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Build Rust (release)
+        env:
+          RUSTFLAGS: ${{ matrix.avx2 && '-C target-feature=+avx2' || '' }}
+        run: cargo build --release --locked
+
+      - name: Build rife-ncnn-vulkan (CMake)
+        shell: bash
+        run: |
+          set -e
+          pushd rife-ncnn-vulkan
+          git submodule update --init --recursive
+          mkdir -p build
+          cd build
+          cmake ../src -DCMAKE_BUILD_TYPE=Release || cmake .. # try both
+          if [[ "$RUNNER_OS" == "Windows" || "$(uname -s 2>/dev/null)" =~ MINGW ]]; then
+            cmake --build . --config Release -- -j 4
+          else
+            cmake --build . -- -j 4
+          fi
+          popd
+        # On Windows the bash shell is available on runners. If you prefer PowerShell builds customize as needed.
+
+      - name: Prepare package layout and copy files (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          PKG=package-${{ matrix.os }}-${{ matrix.avx2 }}
+          rm -rf $PKG
+          mkdir -p $PKG/bin
+          cp target/release/* $PKG/bin/ || true
+          cp LICENSE README.md log_viewer.py $PKG/ || true
+          mkdir -p $PKG/DuplicateDetect/models
+          cp DuplicateDetect/models/* $PKG/DuplicateDetect/models/ || true
+          mkdir -p $PKG/MotionPredictor/models
+          cp MotionPredictor/models/* $PKG/MotionPredictor/models/ || true
+          mkdir -p $PKG/rife-ncnn-vulkan
+          cp -r rife-ncnn-vulkan/build $PKG/rife-ncnn-vulkan/ || true
+          cp -r rife-ncnn-vulkan/models $PKG/rife-ncnn-vulkan/ || true
+          cp -r rife-ncnn-vulkan/LICENSE rife-ncnn-vulkan/README.md $PKG/rife-ncnn-vulkan/ || true
+          zip -r ${PKG}.zip $PKG
+
+      - name: Prepare package layout and copy files (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pkg = "package-${{ matrix.os }}-${{ matrix.avx2 }}"
+          Remove-Item -Recurse -Force $pkg -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path "$pkg\bin" | Out-Null
+          Copy-Item -Force -ErrorAction SilentlyContinue target\release\* "$pkg\bin\" 
+          Copy-Item -Force LICENSE, README.md, log_viewer.py -Destination $pkg -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path "$pkg\DuplicateDetect\models" -Force | Out-Null
+          Copy-Item -Force -ErrorAction SilentlyContinue DuplicateDetect\models\* "$pkg\DuplicateDetect\models\"
+          New-Item -ItemType Directory -Path "$pkg\MotionPredictor\models" -Force | Out-Null
+          Copy-Item -Force -ErrorAction SilentlyContinue MotionPredictor\models\* "$pkg\MotionPredictor\models\"
+          New-Item -ItemType Directory -Path "$pkg\rife-ncnn-vulkan" -Force | Out-Null
+          Copy-Item -Recurse -Force -ErrorAction SilentlyContinue rife-ncnn-vulkan\build "$pkg\rife-ncnn-vulkan\"
+          Copy-Item -Recurse -Force -ErrorAction SilentlyContinue rife-ncnn-vulkan\models "$pkg\rife-ncnn-vulkan\"
+          Copy-Item -Force -ErrorAction SilentlyContinue rife-ncnn-vulkan\LICENSE, rife-ncnn-vulkan\README.md "$pkg\rife-ncnn-vulkan\"
+          Compress-Archive -Path $pkg -DestinationPath "${pkg}.zip" -Force
+
+      - name: Upload zip as release asset
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ${{ github.workspace }}/package-${{ matrix.os }}-${{ matrix.avx2 }}.zip
+          asset_name: myproject-${{ matrix.os }}-${{ matrix.avx2 }}.zip
+          asset_content_type: application/zip
