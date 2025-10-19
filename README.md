@@ -41,6 +41,10 @@ cd video_lag_fix
 cargo build --release --bins
 ```
 
+You will also need to follow the build instructions for [rife-ncnn-vulkan](https://github.com/RedstoneMedia/rife-ncnn-vulkan/?tab=readme-ov-file#build-from-source). \
+The rife binary is expected in `rife-ncnn-vulkan/build`.
+
+
 ## Additional tools
 - **validate** : used to validate duplicate detection performance from **insert_lags**.
 - **insert_lags** : intentionally inserts artificial lags into videos for testing.
