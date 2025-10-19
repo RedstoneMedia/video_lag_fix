@@ -4,6 +4,10 @@ on:
   release:
     types: [created]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name to use'
+        required: true
 
 jobs:
   build-package:
@@ -19,6 +23,23 @@ jobs:
       packages: write
 
     steps:
+      - name: Get or create release and export upload_url
+        id: get_release
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const tag = core.getInput('tag');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            let rel;
+            try {
+              rel = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+            } catch (err) {
+              rel = await github.rest.repos.createRelease({ owner, repo, tag_name: tag, name: tag });
+            }
+            core.setOutput('upload_url', rel.data.upload_url);
+            core.setOutput('release_id', rel.data.id);
+
       - name: Checkout repository with submodules
         uses: actions/checkout@v4
         with:
@@ -80,12 +101,14 @@ jobs:
         env:
           VULKAN_SDK: ${{ runner.workspace }}/VulkanSDK
         run: |
+          set -e
+          pushd rife-ncnn-vulkan
           git submodule update --init --recursive
+          mkdir -p build
+          cd build
           $env:VULKAN_SDK = "$(pwd)/VulkanSDK"
-          mkdir build
-          pushd build
-          cmake -A x64 ../src
-          cmake --build . --config Release -j 4
+          cmake ../src -DCMAKE_BUILD_TYPE=Release || cmake ..
+          cmake --build . -- -j 4
           popd
 
       - name: Prepare package layout and copy files (Linux)
