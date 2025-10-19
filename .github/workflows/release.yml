@@ -79,13 +79,13 @@ jobs:
         env:
           VULKAN_SDK: ${{ runner.workspace }}/VulkanSDK
         run: |
-          set -e
+          $ErrorActionPreference = "Stop"
           pushd rife-ncnn-vulkan
           git submodule update --init --recursive
-          mkdir -p build
+          mkdir build -Force
           cd build
           $env:VULKAN_SDK = "$(pwd)/VulkanSDK"
-          cmake ../src -DCMAKE_BUILD_TYPE=Release || cmake ..
+          cmake ../src -DCMAKE_BUILD_TYPE=Release
           cmake --build . -- -j 4
           popd
 
@@ -95,7 +95,6 @@ jobs:
           set -e
           PKG=package-${{ matrix.os }}-${{ matrix.avx2 }}
           rm -rf "$PKG"
-          mkdir -p "$PKG/bin"
           # Copy top-level release executables only. Avoid deps, rlib, dSYM, *.d files
           for f in target/release/*; do
             if [ -f "$f" ] && [ -x "$f" ]; then
@@ -103,7 +102,7 @@ jobs:
               case "$base" in
                 *.d|*.rlib|*.rmeta|*.dSYM|*.dwo) continue ;;
                 deps) continue ;;
-                *) cp -v "$f" "$PKG/bin/" ;;
+                *) cp -v "$f" "$PKG/" ;;
               esac
             fi
           done
@@ -114,14 +113,13 @@ jobs:
           mkdir -p "$PKG/MotionPredictor/models"
           cp -v MotionPredictor/models/* "$PKG/MotionPredictor/models/" || true
           # Copy only the built rife-ncnn-vulkan executable(s) and shared libs
-          mkdir -p "$PKG/rife-ncnn-vulkan/bin"
+          mkdir -p "$PKG/rife-ncnn-vulkan/build"
           find rife-ncnn-vulkan/build -maxdepth 3 -type f \( -perm /111 -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -print0 \
-            | xargs -0 -I{} cp -v {} "$PKG/rife-ncnn-vulkan/bin/" || true
+            | xargs -0 -I{} cp -v {} "$PKG/rife-ncnn-vulkan/build/" || true
           # Copy models and docs for rife-ncnn-vulkan
           cp -rv rife-ncnn-vulkan/models "$PKG/rife-ncnn-vulkan/" || true
           cp -v rife-ncnn-vulkan/LICENSE rife-ncnn-vulkan/README.md "$PKG/rife-ncnn-vulkan/" || true
           zip -r "${PKG}.zip" "$PKG"
-      
 
       - name: Prepare package layout and copy files (Windows)
         if: runner.os == 'Windows'
@@ -129,11 +127,10 @@ jobs:
         run: |
           $pkg = "package-${{ matrix.os }}-${{ matrix.avx2 }}"
           Remove-Item -Recurse -Force $pkg -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Path "$pkg\bin" | Out-Null
           # Copy only top-level .exe files from target\release (no deps, no .pdb, no .d files)
           Get-ChildItem -Path target\release -File | Where-Object {
             $_.Extension -eq '.exe' -and $_.Name -notlike '*.pdb' -and $_.Name -notlike '*-*' 
-          } | ForEach-Object { Copy-Item -Path $_.FullName -Destination "$pkg\bin\" -Force }
+          } | ForEach-Object { Copy-Item -Path $_.FullName -Destination "$pkg" -Force }
           # Copy project files
           Copy-Item -Force LICENSE, README.md, log_viewer.py -Destination $pkg -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path "$pkg\DuplicateDetect\models" -Force | Out-Null
@@ -141,10 +138,11 @@ jobs:
           New-Item -ItemType Directory -Path "$pkg\MotionPredictor\models" -Force | Out-Null
           Copy-Item -Force -ErrorAction SilentlyContinue MotionPredictor\models\* "$pkg\MotionPredictor\models\"
           # Copy only rife-ncnn-vulkan executables and dlls
+          New-Item -ItemType Directory -Path "$pkg\rife-ncnn-vulkan\build" | Out-Null
           $exe = "build\Release\rife-ncnn-vulkan.exe"
-          Copy-Item -Verbose -Path $exe -Destination "$pkg" -Force
+          Copy-Item -Verbose -Path $exe -Destination "$pkg\rife-ncnn-vulkan\build" -Force
           if (Test-Path "C:\windows\system32\vcomp140.dll") {
-            Copy-Item -Verbose -Path "C:\windows\system32\vcomp140.dll" -Destination "$pkg" -Force
+            Copy-Item -Verbose -Path "C:\windows\system32\vcomp140.dll" -Destination "$pkg\rife-ncnn-vulkan\build" -Force
           }
           Copy-Item -Recurse -Force -ErrorAction SilentlyContinue rife-ncnn-vulkan\models "$pkg\rife-ncnn-vulkan\"
           Copy-Item -Force -ErrorAction SilentlyContinue rife-ncnn-vulkan\LICENSE, rife-ncnn-vulkan\README.md "$pkg\rife-ncnn-vulkan\"
@@ -157,5 +155,5 @@ jobs:
         with:
           upload_url: ${{ github.event.release.upload_url }}
           asset_path: ${{ github.workspace }}/package-${{ matrix.os }}-${{ matrix.avx2 }}.zip
-          asset_name: myproject-${{ matrix.os }}-${{ matrix.avx2 }}.zip
+          asset_name: video_lag_fix-${{ matrix.os }}-${{ matrix.avx2 }}.zip
           asset_content_type: application/zip
