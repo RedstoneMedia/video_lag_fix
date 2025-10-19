@@ -31,12 +31,7 @@ jobs:
             const tag = core.getInput('tag');
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            let rel;
-            try {
-              rel = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
-            } catch (err) {
-              rel = await github.rest.repos.createRelease({ owner, repo, tag_name: tag, name: tag });
-            }
+            const rel = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
             core.setOutput('upload_url', rel.data.upload_url);
             core.setOutput('release_id', rel.data.id);
 
