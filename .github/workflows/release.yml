@@ -95,6 +95,7 @@ jobs:
           set -e
           PKG=package-${{ matrix.os }}-${{ matrix.avx2 }}
           rm -rf "$PKG"
+          mkdir -p "$PKG"
           # Copy top-level release executables only. Avoid deps, rlib, dSYM, *.d files
           for f in target/release/*; do
             if [ -f "$f" ] && [ -x "$f" ]; then
@@ -130,6 +131,7 @@ jobs:
         run: |
           $pkg = "package-${{ matrix.os }}-${{ matrix.avx2 }}"
           Remove-Item -Recurse -Force $pkg -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $pkg -Force | Out-Null
           # Copy only top-level .exe files from target\release (no deps, no .pdb, no .d files)
           Get-ChildItem -Path target\release -File | Where-Object {
             $_.Extension -eq '.exe' -and $_.Name -notlike '*.pdb' -and $_.Name -notlike '*-*'
