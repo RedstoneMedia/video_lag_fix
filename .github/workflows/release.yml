@@ -116,10 +116,13 @@ jobs:
           mkdir -p "$PKG/rife-ncnn-vulkan/build"
           find rife-ncnn-vulkan/build -maxdepth 3 -type f \( -perm /111 -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -print0 \
             | xargs -0 -I{} cp -v {} "$PKG/rife-ncnn-vulkan/build/" || true
-          # Copy models and docs for rife-ncnn-vulkan
-          cp -rv rife-ncnn-vulkan/models "$PKG/rife-ncnn-vulkan/" || true
+          # Copy only rife models v4.0 or higher and docs
+          mkdir -p "$PKG/rife-ncnn-vulkan/models"
+          find rife-ncnn-vulkan/models -maxdepth 1 -type d -regex '.*/rife-v[4-9][^/]*' -print0 \
+            | xargs -0 -I{} cp -rv {} "$PKG/rife-ncnn-vulkan/models/" || true
           cp -v rife-ncnn-vulkan/LICENSE rife-ncnn-vulkan/README.md "$PKG/rife-ncnn-vulkan/" || true
           zip -r "${PKG}.zip" "$PKG"
+      
 
       - name: Prepare package layout and copy files (Windows)
         if: runner.os == 'Windows'
@@ -129,7 +132,7 @@ jobs:
           Remove-Item -Recurse -Force $pkg -ErrorAction SilentlyContinue
           # Copy only top-level .exe files from target\release (no deps, no .pdb, no .d files)
           Get-ChildItem -Path target\release -File | Where-Object {
-            $_.Extension -eq '.exe' -and $_.Name -notlike '*.pdb' -and $_.Name -notlike '*-*' 
+            $_.Extension -eq '.exe' -and $_.Name -notlike '*.pdb' -and $_.Name -notlike '*-*'
           } | ForEach-Object { Copy-Item -Path $_.FullName -Destination "$pkg" -Force }
           # Copy project files
           Copy-Item -Force LICENSE, README.md, log_viewer.py -Destination $pkg -ErrorAction SilentlyContinue
@@ -144,7 +147,10 @@ jobs:
           if (Test-Path "C:\windows\system32\vcomp140.dll") {
             Copy-Item -Verbose -Path "C:\windows\system32\vcomp140.dll" -Destination "$pkg\rife-ncnn-vulkan\build" -Force
           }
-          Copy-Item -Recurse -Force -ErrorAction SilentlyContinue rife-ncnn-vulkan\models "$pkg\rife-ncnn-vulkan\"
+          # Copy only rife models v4.0 or higher and docs
+          New-Item -ItemType Directory -Path "$pkg\rife-ncnn-vulkan\models" -Force | Out-Null
+          Get-ChildItem -Path "rife-ncnn-vulkan\models" -Directory | Where-Object { $_.Name -match '^rife-v([4-9])(\..*)?$' } |
+            ForEach-Object { Copy-Item -Recurse -Verbose -Path $_.FullName -Destination "$pkg\rife-ncnn-vulkan\models" -Force }
           Copy-Item -Force -ErrorAction SilentlyContinue rife-ncnn-vulkan\LICENSE, rife-ncnn-vulkan\README.md "$pkg\rife-ncnn-vulkan\"
           Compress-Archive -Path $pkg -DestinationPath "${pkg}.zip" -Force
 
