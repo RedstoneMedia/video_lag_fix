@@ -6,7 +6,7 @@ use ort::session::Session;
 use ort::value::Tensor;
 use crate::find::models::{create_model_session, INPUT_SIZE};
 
-const MODEL_PATH: &str = "DuplicateDetect/models/conv-v3.onnx";
+const MODEL_PATH: &str = "DuplicateDetect/models/tiny_duplicate_net.onnx";
 const THREADS: usize = 2;
 
 static SESSION: Lazy<Arc<Mutex<Session>>> = Lazy::new(|| {

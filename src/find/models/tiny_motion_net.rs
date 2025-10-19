@@ -6,7 +6,7 @@ use ort::inputs;
 use ort::value::Tensor;
 use crate::find::models::{create_model_session, INPUT_SIZE};
 
-const MODEL_PATH: &str = "MotionPredictor/models/v8.onnx";
+const MODEL_PATH: &str = "MotionPredictor/models/tiny_motion_net.onnx";
 const THREADS: usize = 3;
 
 static SESSION: Lazy<Arc<Mutex<Session>>> = Lazy::new(|| {
