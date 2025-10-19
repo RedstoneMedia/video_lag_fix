@@ -1,6 +1,6 @@
 use ffmpeg_sidecar::event::OutputVideoFrame;
 use fast_image_resize::images::Image;
-use fast_image_resize::{CpuExtensions, FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
+use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 use image_hasher::{HashAlg, ImageHash};
 use image::DynamicImage;
 use crate::Args;
@@ -76,10 +76,6 @@ pub fn preprocess_frame(frame: &OutputVideoFrame, args: &Args) -> PreprocessedFr
         .to_hasher();
     // Pre-resize because image-rs resizing in Hasher is slow.
     let mut resizer = Resizer::new();
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        resizer.set_cpu_extensions(CpuExtensions::Avx2);
-    }
     let resize_options = ResizeOptions::new()
         .resize_alg(ResizeAlg::Convolution(FilterType::CatmullRom));
     let width = hash_width + 1; // According to HashAlg::Gradient (row-major)

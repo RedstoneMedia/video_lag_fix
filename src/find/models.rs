@@ -1,6 +1,6 @@
 use std::path::Path;
 use fast_image_resize::images::Image;
-use fast_image_resize::{CpuExtensions, FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
+use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 
@@ -19,10 +19,6 @@ fn create_model_session(model_path: impl AsRef<Path>, threads: usize) -> Session
 
 pub fn preprocess_image(gray_img: &Image) -> Image<'static> {
     let mut resizer = Resizer::new();
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        resizer.set_cpu_extensions(CpuExtensions::Avx2);
-    }
     let resize_options = ResizeOptions::new()
         .resize_alg(ResizeAlg::Convolution(FilterType::CatmullRom));
     let mut resized = Image::new(INPUT_SIZE.0 as u32, INPUT_SIZE.1 as u32, PixelType::U8);
