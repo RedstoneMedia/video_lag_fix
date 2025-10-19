@@ -124,6 +124,8 @@ jobs:
 
       - name: Upload zip as release asset
         uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ github.event.release.upload_url }}
           asset_path: ${{ github.workspace }}/package-${{ matrix.os }}-${{ matrix.avx2 }}.zip
