@@ -24,8 +24,8 @@ struct Cli {
     #[arg(short)]
     input_path: PathBuf,
     /// The output video file path
-    #[arg(short)]
-    output_path: PathBuf,
+    #[arg(short, required_unless_present="find_only")]
+    output_path: Option<PathBuf>,
 
     /// The path to the rife-ncnn-vulkan model relative to the rife binary
     #[arg(short = 'm', default_value = "../models/rife-v4.26-large")]
@@ -83,7 +83,7 @@ struct Cli {
     #[arg(long, default_value = "cuda")]
     render_hwaccel: Option<String>,
     /// Space seperated output args passed to ffmpeg
-    #[arg(short, long, allow_hyphen_values = true, default_value = "-c:v av1_nvenc -preset p7 -rc vbr -cq 36 -rc-lookahead 48 -spatial-aq 1 -aq-strength 10 -multipass 2 -pix_fmt yuv420p -map 0:a -c:a libopus -b:a 48k")]
+    #[arg(short, long, allow_hyphen_values = true, default_value = "-c:v av1_nvenc -preset p7 -rc vbr -cq 30 -rc-lookahead 48 -spatial-aq 1 -aq-strength 10 -multipass 2 -pix_fmt yuv420p -map 0:a -c:a libopus -b:a 48k")]
     render_args: String,
 
     /// Only find duplicates, do not patch video
@@ -142,7 +142,6 @@ fn main() {
         std::process::exit(1);
     }
     setup_logging(&cli_args);
-    info!("Processing: \"{}\" to \"{}\"", cli_args.input_path.display(), cli_args.output_path.display());
 
     let start = std::time::Instant::now();
     if !cli_args.find_only {
@@ -157,12 +156,14 @@ fn main() {
             patch_sender.send(done_duplicate.into()).unwrap();
         });
 
+        let input_path = cli_args.input_path.clone();
+        let output_path = cli_args.output_path.clone().expect("Output path is required");
+        info!("Processing: \"{}\" to \"{}\"", cli_args.input_path.display(), output_path.display());
+
         let patch_args = PatchArgs::new(
             cli_args.render_hwaccel.clone(),
             cli_args.render_args.split(' ')
         );
-        let input_path = cli_args.input_path.clone();
-        let output_path = cli_args.output_path.clone();
         let patch_thread = std::thread::spawn(move ||
             patch::patch_video(input_path, output_path, &patch_args, patch_receiver)
         );
@@ -173,6 +174,7 @@ fn main() {
         rife.complete();
         patch_thread.join().unwrap();
     } else {
+        info!("Processing: \"{}\"", cli_args.input_path.display());
         let args = cli_args.as_args();
         find::find_duplicates(&cli_args.input_path, None, &args);
     }
