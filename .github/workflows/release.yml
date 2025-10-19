@@ -9,6 +9,7 @@ jobs:
   build-package:
     runs-on: ${{ matrix.os }}
     strategy:
+      max-parallel: 1
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -33,7 +34,21 @@ jobs:
         shell: pwsh
         run: |
           choco install -y cmake
-          choco install -y vulkan-sdk || Write-Host "choco vulkan-sdk install may fail on hosted image; ensure Vulkan SDK available"
+
+      - name: Windows cache VulkanSDK
+        if: runner.os == 'Windows'
+        id: cache-vulkansdk
+        uses: actions/cache@v4
+        with:
+          path: VulkanSDK
+          key: VulkanSDK-1.3.268.0-Installer
+
+      - name: Windows install VulkanSDK
+        if: runner.os == 'Windows' && steps.cache-vulkansdk.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/1.4.328.1/windows/vulkansdk-windows-X64-1.4.328.1.exe?Human=true" -OutFile vulkansdk-windows-X64-1.4.328.1.exe
+          7z x -aoa ./vulkansdk-windows-X64-1.4.328.1.exe -oVulkanSDK
 
       - name: Set up Rust
         uses: actions-rs/toolchain@v1
@@ -46,7 +61,8 @@ jobs:
           RUSTFLAGS: ${{ matrix.avx2 && '-C target-feature=+avx2' || '' }}
         run: cargo build --release --locked
 
-      - name: Build rife-ncnn-vulkan (CMake)
+      - name: Linux build rife-ncnn-vulkan
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -e
@@ -54,14 +70,23 @@ jobs:
           git submodule update --init --recursive
           mkdir -p build
           cd build
-          cmake ../src -DCMAKE_BUILD_TYPE=Release || cmake .. # try both
-          if [[ "$RUNNER_OS" == "Windows" || "$(uname -s 2>/dev/null)" =~ MINGW ]]; then
-            cmake --build . --config Release -- -j 4
-          else
-            cmake --build . -- -j 4
-          fi
+          cmake ../src -DCMAKE_BUILD_TYPE=Release || cmake ..
+          cmake --build . -- -j 4
           popd
-        # On Windows the bash shell is available on runners. If you prefer PowerShell builds customize as needed.
+
+      - name: Windows build rife-ncnn-vulkan
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VULKAN_SDK: ${{ runner.workspace }}/VulkanSDK
+        run: |
+          git submodule update --init --recursive
+          $env:VULKAN_SDK = "$(pwd)/VulkanSDK"
+          mkdir build
+          pushd build
+          cmake -A x64 ../src
+          cmake --build . --config Release -j 4
+          popd
 
       - name: Prepare package layout and copy files (Linux)
         if: runner.os == 'Linux'
@@ -115,9 +140,10 @@ jobs:
           New-Item -ItemType Directory -Path "$pkg\MotionPredictor\models" -Force | Out-Null
           Copy-Item -Force -ErrorAction SilentlyContinue MotionPredictor\models\* "$pkg\MotionPredictor\models\"
           # Copy only rife-ncnn-vulkan executables and dlls
-          New-Item -ItemType Directory -Path "$pkg\rife-ncnn-vulkan\bin" -Force | Out-Null
-          Get-ChildItem -Path rife-ncnn-vulkan\build -Recurse -Include *.exe,*.dll -File | ForEach-Object {
-            Copy-Item -Path $_.FullName -Destination "$pkg\rife-ncnn-vulkan\bin\" -Force
+          $exe = "build\Release\rife-ncnn-vulkan.exe"
+          Copy-Item -Verbose -Path $exe -Destination "$pkg" -Force
+          if (Test-Path "C:\windows\system32\vcomp140.dll") {
+            Copy-Item -Verbose -Path "C:\windows\system32\vcomp140.dll" -Destination "$pkg" -Force
           }
           Copy-Item -Recurse -Force -ErrorAction SilentlyContinue rife-ncnn-vulkan\models "$pkg\rife-ncnn-vulkan\"
           Copy-Item -Force -ErrorAction SilentlyContinue rife-ncnn-vulkan\LICENSE, rife-ncnn-vulkan\README.md "$pkg\rife-ncnn-vulkan\"
