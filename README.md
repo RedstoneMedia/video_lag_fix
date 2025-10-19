@@ -2,6 +2,14 @@
 
 Automatically finds and fixes lags in video recordings by detecting duplicate frames and interpolating only the laggy sections using RIFE.
 
+## Usage
+
+Basic example:
+
+```bash
+./target/release/video_lag_fix -i input.mp4 -o output.mp4
+```
+
 ## Processing pipeline
 
 1. Perceptual hashing to quickly filter obviously unique frames.
