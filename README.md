@@ -2,7 +2,7 @@
 
 Automatically finds and fixes lags in video recordings by detecting duplicate frames and interpolating only the laggy sections using RIFE.
 
-## Process Pipeline
+## Processing pipeline
 
 1. Perceptual hashing to quickly filter obviously unique frames.
 2. `tiny_duplicate_net` classifier for robust duplicate detection (more resistant to artifacts).
