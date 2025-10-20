@@ -4,6 +4,12 @@ Automatically finds and fixes lags in video recordings by detecting duplicate fr
 
 > **Note:** his tool is not a magic bullet. While interpolating large freeze frames in low-motion areas works, high-motion segments with long freezes are difficult to restore.
 
+## Key points
+
+* Naive full-video interpolation amplifies lags. This tool detects laggy regions and interpolates only those, which both reduces amplified lag and is faster than naive RIFE.
+* Motion compensation interpolates more frames than were detected as duplicates to avoid the interpolated segment appearing slower.
+* Uses RIFE-NCNN-Vulkan for interpolation.
+
 ## Usage
 
 Basic example:
@@ -19,12 +25,6 @@ Basic example:
 3. `tiny_motion_net` regressor to decide the interpolation window by estimating global absolute motion magnitude.
 4. RIFE interpolates intermediate frames.
 5. Patch interpolated frames back into the video.
-
-## Key points
-
-* Naive full-video interpolation amplifies lags. This tool detects laggy regions and interpolates only those, which both reduces amplified lag and is faster than naive RIFE.
-* Motion compensation interpolates more frames than were detected as duplicates to avoid the interpolated segment appearing slower.
-* Uses RIFE-NCNN-Vulkan for interpolation.
 
 
 ## Video Example
