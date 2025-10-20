@@ -59,3 +59,6 @@ The rife binary is expected in `rife-ncnn-vulkan/build`.
 ## Additional tools
 - **validate** : used to validate duplicate detection performance from **insert_lags**.
 - **insert_lags** : intentionally inserts artificial lags into videos for testing.
+- **log_viewer** : visualizes the produced logs for debugging. Best used with -v when generating logs: <img width="812" height="464" alt="Screenshot_20251020_144143" src="https://github.com/user-attachments/assets/7ceb7af0-12ed-4b5c-8150-b70021b08be6" />
+
+
