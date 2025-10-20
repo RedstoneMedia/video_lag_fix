@@ -2,6 +2,8 @@
 
 Automatically finds and fixes lags in video recordings by detecting duplicate frames and interpolating only the laggy sections using RIFE.
 
+> **Note:** his tool is not a magic bullet. While interpolating large freeze frames in low-motion areas works, high-motion segments with long freezes are difficult to restore.
+
 ## Usage
 
 Basic example:
