@@ -26,6 +26,14 @@ Basic example:
 * Motion compensation interpolates more frames than were detected as duplicates to avoid the interpolated segment appearing slower.
 * Uses RIFE-NCNN-Vulkan for interpolation.
 
+
+## Video Example
+
+https://github.com/user-attachments/assets/1a966c1d-e2ae-4f3d-a6c5-81ca7646f238
+
+*Left: Laggy video, Right: Fixed video*
+*(both slowed by 50%)*
+
 ## Key options
 
 * `-i <path>` input file
