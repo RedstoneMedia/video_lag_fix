@@ -32,6 +32,7 @@ Basic example:
 * `--find-only` detect duplicates only, do not patch video
 * `--render-hwaccel` ffmpeg hardware accel backend (default `cuda`)
 * `--render-args` ffmpeg output args (must be changed for non-CUDA hardware or different codecs)
+* `--max-motion-mul` maximum multiple of the background average motion allowed to still interpolate (default 7.3). Higher values allow more motion to be interpolated; lower values restrict high-motion interpolation. Range: 1.0..
 
 ## Build
 
