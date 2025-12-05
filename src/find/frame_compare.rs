@@ -11,7 +11,7 @@ fn get_luma(r: u8, g: u8, b: u8) -> u32 {
     ((r as u32 * 77) + (g as u32 * 150) + (b as u32 * 29)) >> 8 // Approx Rec. 709 luma
 }
 
-fn to_grayscale(frame: &OutputVideoFrame) -> Vec<u8> {
+pub fn to_grayscale(frame: &OutputVideoFrame) -> Vec<u8> {
     let src = &frame.data;
     let n = src.len() / 3;
     let mut gray = vec![0u8; n];
