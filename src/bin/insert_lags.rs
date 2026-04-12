@@ -7,7 +7,7 @@ use clap::Parser;
 use fern::Dispatch;
 use ffmpeg_sidecar::command::FfmpegCommand;
 use image::RgbImage;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use video_lag_fix::patch::{patch_video, Patch, PatchArgs};
 use video_lag_fix::{utils, VIDEO_DECODE_ARGS};
 
@@ -108,7 +108,7 @@ pub fn insert_lags(
     let mut rng = if let Some(seed) = seed {
         rand::rngs::StdRng::seed_from_u64(seed)
     } else {
-        rand::rngs::StdRng::from_os_rng()
+        rand::make_rng()
     };
 
     // Select insert locations

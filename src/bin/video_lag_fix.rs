@@ -66,7 +66,7 @@ struct Cli {
     /// Maximum multiple of the background average motion allowed to still interpolate
     /// Allows for more interpolation in low motion areas while thwarting troubling high motion areas to be interpolated too much
     /// Range: 1.0.. (higher = more motion allowed to be interpolated)
-    #[arg(long, default_value_t = 7.3, verbatim_doc_comment)]
+    #[arg(long, default_value_t = 6.5, verbatim_doc_comment)]
     max_motion_mul: f32,
 
     /// Factor by which input frames are downscaled for perceptual hashing

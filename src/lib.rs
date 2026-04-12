@@ -5,7 +5,7 @@ pub mod utils;
 
 
 pub struct Args {
-    /// Minium confidence to consider two frames distinct
+    /// Minium confidence to consider two frames duplicates.
     /// Range: 0.0..1.0 (1.0 = max confidence, 0.0 = no confidence)
     pub min_duplicate_confidence: f32,
     /// Minimum number of consecutive duplicate frames required to trigger interpolation
