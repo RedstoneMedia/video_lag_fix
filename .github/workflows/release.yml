@@ -152,10 +152,20 @@ jobs:
           Copy-Item -Force -ErrorAction SilentlyContinue MotionPredictor\models\* "$pkg\MotionPredictor\models\"
           # Copy only rife-ncnn-vulkan executables and dlls
           New-Item -ItemType Directory -Path "$pkg\rife-ncnn-vulkan\build" | Out-Null
-          $exe = "build\Release\rife-ncnn-vulkan.exe"
+          $exe = "rife-ncnn-vulkan\build\Release\rife-ncnn-vulkan.exe"
+          if (-not (Test-Path $exe)) { throw "rife-ncnn-vulkan.exe not found at $exe" }
           Copy-Item -Verbose -Path $exe -Destination "$pkg\rife-ncnn-vulkan\build" -Force
-          if (Test-Path "C:\windows\system32\vcomp140.dll") {
-            Copy-Item -Verbose -Path "C:\windows\system32\vcomp140.dll" -Destination "$pkg\rife-ncnn-vulkan\build" -Force
+          # OpenMP runtime (vcomp140.dll): System32, falling back to the VS installation
+          $vcomp = "$env:SystemRoot\System32\vcomp140.dll"
+          if (-not (Test-Path $vcomp)) {
+            $vcompFile = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\18" -Filter vcomp140.dll -Recurse -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -like '*x64*' } | Select-Object -First 1
+            if ($vcompFile) { $vcomp = $vcompFile.FullName }
+          }
+          if (Test-Path $vcomp) {
+            Copy-Item -Verbose -Path $vcomp -Destination "$pkg\rife-ncnn-vulkan\build" -Force
+          } else {
+            Write-Warning "vcomp140.dll not found; rife-ncnn-vulkan.exe will require the VC++ redistributable at runtime"
           }
           # Copy only rife models v4.0 or higher and docs
           New-Item -ItemType Directory -Path "$pkg\rife-ncnn-vulkan\models" -Force | Out-Null
