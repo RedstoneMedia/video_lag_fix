@@ -3,6 +3,7 @@ name: Build and package on release
 on:
   release:
     types: [created]
+  workflow_dispatch:
 
 jobs:
   build-package:
@@ -43,11 +44,21 @@ jobs:
           key: VulkanSDK-1.4.309.0-Installer
 
       - name: Windows install VulkanSDK
-        if: runner.os == 'Windows' && steps.cache-vulkansdk.outputs.cache-hit != 'true'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/1.4.309.0/windows/VulkanSDK-1.4.309.0-Installer.exe?Human=true" -OutFile VulkanSDK-1.4.309.0-Installer.exe
+          if (Test-Path "$env:GITHUB_WORKSPACE\VulkanSDK\Include\vulkan\vulkan_core.h") {
+            Write-Host "VulkanSDK already present, skipping download"
+            exit 0
+          }
+          if (-not (Test-Path "$env:GITHUB_WORKSPACE\VulkanSDK-1.4.309.0-Installer.exe")) {
+            Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/1.4.309.0/windows/VulkanSDK-1.4.309.0-Installer.exe?Human=true" -OutFile VulkanSDK-1.4.309.0-Installer.exe
+          }
           7z x -aoa ./VulkanSDK-1.4.309.0-Installer.exe -oVulkanSDK
+          if (-not (Test-Path "$env:GITHUB_WORKSPACE\VulkanSDK\Include\vulkan\vulkan_core.h") -or
+              -not (Test-Path "$env:GITHUB_WORKSPACE\VulkanSDK\Lib\vulkan-1.lib")) {
+            throw "VulkanSDK extraction failed (missing headers or loader lib)"
+          }
 
       - name: Set up Rust
         uses: actions-rs/toolchain@v1
@@ -77,16 +88,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          VULKAN_SDK: ${{ runner.workspace }}/VulkanSDK
+          VULKAN_SDK: ${{ github.workspace }}\VulkanSDK
         run: |
           $ErrorActionPreference = "Stop"
           pushd rife-ncnn-vulkan
           git submodule update --init --recursive
-          mkdir build -Force
-          cd build
-          $env:VULKAN_SDK = "$(pwd)/VulkanSDK"
-          cmake ../src -DCMAKE_BUILD_TYPE=Release
-          cmake --build . -- /m 4
+          cmake -S src -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release --parallel 4
           popd
 
       - name: Prepare package layout and copy files (Linux)
@@ -156,7 +164,16 @@ jobs:
           Copy-Item -Force -ErrorAction SilentlyContinue rife-ncnn-vulkan\LICENSE, rife-ncnn-vulkan\README.md "$pkg\rife-ncnn-vulkan\"
           Compress-Archive -Path $pkg -DestinationPath "${pkg}.zip" -Force
 
+      - name: Upload artifact (manual runs)
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: video_lag_fix-${{ matrix.os }}-${{ matrix.avx2 }}
+          path: ${{ github.workspace }}/package-${{ matrix.os }}-${{ matrix.avx2 }}.zip
+          if-no-files-found: error
+
       - name: Upload zip as release asset
+        if: github.event_name == 'release'
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
